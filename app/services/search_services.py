@@ -2,7 +2,7 @@ from app.repository.vector_repo import KeyframeSearch, CaptionSearch
 from app.schemas.application import EventOrder, EventHit
 from typing import Literal, Optional, Sequence, Callable
 import heapq
-
+from statistics import mean, pstdev
 
 
 
@@ -14,6 +14,9 @@ def _dedup_hits(
         return []
     def _pos(h: EventHit)-> int:
         return int(h.keyframe_id)
+
+    hits = sorted(hits, key=lambda h: int(h.keyframe_id))
+
 
     kept: list[EventHit]= []
     i = 0
@@ -78,11 +81,14 @@ def organize_and_dedup_group_video(
         dedup_lists: list[list[EventHit]] = []
         completed=True
         for e_idx in range(T):
-            ev_list = per_event[e_idx]
+            ev_list = per_event.get(e_idx, [])
+            if len(ev_list) == 0:
+                print(f"Warning: {gr_vid_key} event list is empty")
             ev_list = _dedup_hits(ev_list, window)
             if len(ev_list) == 0:
                 completed=False
                 break
+            ev_list.sort(key=lambda x: x.score, reverse=True)
             dedup_lists.append(ev_list)
         if completed:
             by_group_video[gr_vid_key] = dedup_lists
@@ -97,15 +103,13 @@ def beam_sequences_single_bucket(
     event_lists: list[list[EventHit]], # for one video: [hits for E0, hits for E1, ...], all non-empty. It should be same video id, group id
     K: int | None = 5,
     beam_size: int = 50,
-    trans_sigma: float = 10.0,
-    trans_weight: float = 0.5,
+    trans_sigma: float = 1.5 * 6,
+    trans_weight: float = 0.6,
 ):
     # ensure the same video_id, group_id
     
 
     def temporal_prior(prev: EventHit, curr: EventHit) -> float:
-        if int(curr.keyframe_id) <= int(prev.keyframe_id):
-            return 1e-9
         gap = int(curr.keyframe_id) - int(prev.keyframe_id)
         return - (gap * gap) / (2 * trans_sigma * trans_sigma) * trans_weight
 
@@ -142,20 +146,49 @@ def beam_sequences_single_bucket(
         return [(path, -negative_score) for (negative_score, path) in topK]
 
 
+
+def _clone_with_score(h: EventHit, new_score: float) -> EventHit:
+    obj = h.model_copy(deep=True)
+    obj.score = float(new_score)
+    return obj
+
+def _normalize_event_scores(
+    event_lists: list[list[EventHit]],
+    method: str = "zscore",   # "zscore" | "minmax"
+    eps: float = 1e-6,
+    temperature: float = 1.0,
+):
+    """
+    Norm for each event in the same group,video
+    """
+    norm_lists: list[list[EventHit]] = []
+    for ev_hits in event_lists:
+        scores = [h.score for h in ev_hits]
+        if method=='zscore':
+            mu = mean(scores)
+            sd = pstdev(scores) if len(scores) > 1 else 0.0
+            normed = [ (s - mu) / (sd + eps) for s in scores ]
+        else:  
+            lo, hi = min(scores), max(scores)
+            normed = [ (s - lo) / (max(hi - lo, eps)) for s in scores ]
+        if temperature and temperature != 1.0:
+            normed = [ s / float(temperature) for s in normed ]
+        norm_hits = [_clone_with_score(h, s) for h, s in zip(ev_hits, normed)]
+        norm_hits.sort(key=lambda x: x.score, reverse=True)
+        norm_lists.append(norm_hits)
+    return norm_lists
+
+
 def rerank_across_videos(
     by_bucket_paths: dict[tuple[str, str], list[tuple[list[EventHit], float]]],
     top_k: int | None = None
 ):
     flat: list[tuple[list[EventHit], float]] = []
-    for _bucket, paths in by_bucket_paths.items():
+    for _, paths in by_bucket_paths.items():
         flat.extend(paths)
     
     flat.sort(key=lambda x: x[1], reverse=True)
     return flat if top_k is None else flat[:top_k]
-
-
-            
-            
 
 
 
@@ -206,19 +239,26 @@ class SearchService:
 
     def trake_search(
         self,
-        raw_hits_per_event: list[list[EventHit]], # [hits for E0, hits for E1, ...]
+        raw_hits_per_event: list[list[EventHit]],
         window: int, 
         beam_size: int = 50,
         per_bucket_top_k: int | None = None,
         global_top_k: int | None = None,
+        norm_method: str = "zscore",
+        norm_temperature: float = 1.0,
     ) -> list[tuple[list[EventHit], float]]:
         
         by_group_video = organize_and_dedup_group_video(raw_hits_per_event, window)
 
         by_bucket_paths: dict[tuple[str, str], list[tuple[list[EventHit], float]]] = {}
         for bucket, event_lists in by_group_video.items():
+            norm_lists = _normalize_event_scores(
+                event_lists,
+                method=norm_method,
+                temperature=norm_temperature
+            )
             paths = beam_sequences_single_bucket(
-                event_lists=event_lists,
+                event_lists=norm_lists,
                 beam_size=beam_size,
                 K=per_bucket_top_k,
             )

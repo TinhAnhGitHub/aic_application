@@ -1,8 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence
 from elasticsearch import Elasticsearch, NotFoundError
-from pydantic import BaseModel, Field
 
 
 from app.schemas.application import KeyframeInstance, ElasticSortedKeyframe
