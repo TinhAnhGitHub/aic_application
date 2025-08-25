@@ -9,7 +9,7 @@ from app.common.repository import MilvusVectorSearch
 
 
 
-class KeyframeSearch(MilvusVectorSearch):
+class KeyframeSearchRepo(MilvusVectorSearch):
     KF_DENSE_FIELD = "kf_embedding"
 
     @property
@@ -18,7 +18,7 @@ class KeyframeSearch(MilvusVectorSearch):
     
 
 
-class CaptionSearch(MilvusVectorSearch):
+class CaptionSearchRepo(MilvusVectorSearch):
     CAPTION_DENSE_FIELD = "caption_embedding"
     CAPTION_SPARSE_FIELD = "caption_sparse"
 

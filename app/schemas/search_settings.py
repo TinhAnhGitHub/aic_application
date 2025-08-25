@@ -23,7 +23,7 @@ class FusionWeights:
         else:
             normed = (weights - min_val) / (max_val - min_val)
         
-        return self.w_visual, self.w_caption, self.w_ocr
+        return normed[0], normed[1], normed[2]
 
 
 

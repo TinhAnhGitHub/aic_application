@@ -3,11 +3,11 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Literal
 
-from app.schemas.application import KeyframeSearchMilvusResponseItem
+from app.schemas.application import  KeyframeScore, CaptionSearch, KeyframeSearch, OCRSearch
 
 
 class KeyframeModel(Document):
-    identification: str = Field(..., description="A unique identifier for the keyframe.")
+    identification: int = Field(..., description="A unique identifier for the keyframe.")
     group_id: str = Field(..., description="The group ID of the keyframe.")
     video_id: str = Field(..., description="The video ID associated with the keyframe.")
     keyframe_id: str = Field(..., description="The unique ID of the keyframe.")
@@ -23,21 +23,6 @@ class KeyframeModel(Document):
         ]
 
 
-class CaptionSearch(BaseModel):
-    caption_search_text: str = Field(..., description="The keyframe search text")
-    mode: Literal['rrf', 'weighted']
-    weighted: float | None = Field(None, description="The weighted if using weighted, of the embedding. The bm25 will be (1 - embedding_weight)")
-    tag_boost_alpha: float = Field(...,ge=0, le=1.0, description="Tag boost alpha, if 0.0 then it will not be used")
-
-class KeyframeSearch(BaseModel):
-    caption_search_text: str = Field(..., description="The keyframe search text")
-    tag_boost_alpha: float = Field(...,ge=0, le=1.0, description="Tag boost alpha, if 0.0 then it will not be used")
-
-
-class OCRSearch(BaseModel):
-    list_ocr: list[str] = Field(..., description="List of OCR")
-
-
 
 class ChatHistory(Document):
     """
@@ -46,7 +31,7 @@ class ChatHistory(Document):
     question_filename: str = Field(..., description="The name/identifier of the question or search.")
     timestamp: datetime = Field(default_factory=datetime.now, description="When the history item was created.")
     
-    return_images: list[KeyframeSearchMilvusResponseItem] = Field(..., description="Search images associated with this history.")
+    return_images: list[KeyframeScore] = Field(..., description="Search images associated with this history.")
 
     keyframe_search_text: KeyframeSearch | None = Field(None, description="The keyframe search text")
     caption_search_text: CaptionSearch | None = Field(None, description="The caption search text")
@@ -55,10 +40,4 @@ class ChatHistory(Document):
     
     rerank: Literal['rrf', 'weigted'] | None = Field(None, description="Enable if both caption, keyframe search and OCR")
     weights: list[float] | None = Field(None, description="Weighted of visual embedding. Caption search will be (1-keyframe embedding)")
-
-
-
-
-
-
     

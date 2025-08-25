@@ -88,16 +88,17 @@ class ModelService:
         self.processor = Processor(self.tokenizer)
     
     @torch.inference_mode()
-    def embed_text(self, texts: List[str], batch_size: int = 64) -> np.ndarray:
+    def embed_text(self, text: str) -> list[float]:
         embs = self.text_model.encode(
-            texts,
-            batch_size=batch_size,
+            [text],
+            batch_size=1,
             convert_to_tensor=True,
             show_progress_bar=False,
             device=self.device,
         )
         embs = torch.nn.functional.normalize(embs, p=2, dim=-1)
-        return embs.detach().cpu().numpy().astype(np.float32)
+        return embs[0].detach().cpu().numpy().astype(np.float32)
+        
 
     @torch.inference_mode()
     def embed_images(self, images: List[Image.Image], batch_size: int = 32) -> np.ndarray:

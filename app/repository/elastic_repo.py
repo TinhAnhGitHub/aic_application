@@ -1,9 +1,9 @@
 from __future__ import annotations
 from typing import Iterable, List, Optional, Sequence
-from elasticsearch import Elasticsearch, NotFoundError
+from elasticsearch import AsyncElasticsearch, NotFoundError
 
 
-from app.schemas.application import KeyframeInstance, ElasticSortedKeyframe
+from app.schemas.application import KeyframeInstance, KeyframeScore
 
 
 
@@ -27,7 +27,7 @@ class ElasticsearchKeyframeRepo:
         verify_certs: bool = False,
         request_timeout: int = 30,
     ):
-        self.es = Elasticsearch(
+        self.es = AsyncElasticsearch(
             hosts=hosts,
             api_key=api_key,
             basic_auth=basic_auth,
@@ -149,7 +149,7 @@ class ElasticsearchKeyframeRepo:
             return None
         return KeyframeInstance(**resp["_source"])
 
-    def search(
+    async def search(
         self,
         query_text: str,
         top_k: int = 10,
@@ -158,7 +158,7 @@ class ElasticsearchKeyframeRepo:
         min_score: Optional[float] = None,
         from_: int = 0,
         explain: bool = False,
-    ) -> List[ScoredKeyframe]:
+    ) -> List[KeyframeScore]:
         """
         “Mostly exact” OCR search with a little fuzziness.
 
@@ -220,21 +220,22 @@ class ElasticsearchKeyframeRepo:
         if min_score is not None:
             body["min_score"] = min_score
         
-        resp = self.es.search(index=self.index, body=body, explain=explain)
+        resp = await self.es.search(index=self.index, body=body, explain=explain)
         hits = resp.get('hits', {}).get('hits', [])
         out = []
         for hit in hits:
             src = hit.get("_source", {})
-            keyframe_instance = KeyframeInstance(**{
-                "group_id": src["group_id"],
-                "video_id": src["video_id"],
-                "keyframe_id": src["keyframe_id"],
-                "identification": src["identification"],
-                "tags": src.get("tags"),
-                "ocr": src.get("ocr"),
-            })
-            out.append(ElasticSortedKeyframe(score=hit.get("_score", 0.0), keyframe_instance=keyframe_instance))
-        
+            out.append(
+                KeyframeScore(
+                    score=hit.get("_score", 0.0),
+                    group_id=src['group_id'],
+                    video_id=src['video_id'],
+                    keyframe_id=src['keyframe_id'],
+                    identification=src['identification'],
+                    tags=src.get("tags"),
+                    ocr=src.get("ocr")
+                )
+            )
         return out
 
 

@@ -1,4 +1,4 @@
-from app.repository.vector_repo import KeyframeSearch, CaptionSearch
+from app.repository.vector_repo import KeyframeSearchRepo, CaptionSearchRepo
 from app.schemas.application import EventOrder, EventHit
 from typing import Literal, Optional, Sequence, Callable
 import heapq
@@ -195,8 +195,8 @@ def rerank_across_videos(
 class SearchService:
     def __init__(
         self,
-        keyframe_search: KeyframeSearch,
-        caption_search: CaptionSearch,
+        keyframe_search: KeyframeSearchRepo,
+        caption_search: CaptionSearchRepo,
     ):
         self.keyframe_search = keyframe_search
         self.caption_search = caption_search
@@ -206,7 +206,7 @@ class SearchService:
         return await self.keyframe_search.search_dense(query_embedding, top_k, param, **kwargs)
     
     async def search_caption_dense(self, query_embedding: list[float], top_k: int, param: dict, **kwargs):
-        return await self.caption_search.search_dense(query_embedding, top_k, param, **kwargs)
+        return await self.caption_search.search_caption_dense(query_embedding, top_k, param, **kwargs)
 
     async def search_caption_hybrid(
         self,
@@ -222,19 +222,6 @@ class SearchService:
         )
 
 
-    async def seach_keyframe_caption_hybrid(
-        self,
-        kf_req,
-        caption_dense_req,
-        caption_sparse_req,
-        rerank: Literal["rrf", "weighted"] = "rrf",
-        weights: Optional[Sequence[float]] = None,
-    ):
-        return await self.keyframe_search.search_combination(
-            requests=[kf_req, caption_dense_req, caption_sparse_req],
-            rerank=rerank,
-            weights=weights,
-        )
     
 
     def trake_search(

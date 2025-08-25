@@ -7,7 +7,7 @@ from rapidfuzz import fuzz
 from underthesea import word_tokenize
 
 from app.schemas.application import TagInstance
-from app.schemas.application import KeyframeSearchMilvusResponseItem
+from app.schemas.application import KeyframeScore
 
 
 
@@ -114,23 +114,23 @@ class TagService:
     def rerank_keyframe_search_with_tags(
         self,
         tags: list[TagInstance],
-        keyframe_results: list[KeyframeSearchMilvusResponseItem],
+        results_search: list[KeyframeScore],
         alpha: float = 0.2
-    ):
+    ) -> list[KeyframeScore]:
         """Rerank the keyframe search results with the tags
 
         Args:
             tags (list[TagInstance]): List of tags with name and score
-            keyframe_results (list[KeyframeSearchMilvusResponseItem]): list of returned keyframes
+            results_search (list[MilvusSearchResponseItem]): list of returned keyframes
         """
 
-        if not keyframe_results:
+        if not results_search:
             return []
 
         top_tag_names = {t.tag_name for t in tags}
 
         clip_scores = np.array([
-            kf.score for kf in keyframe_results
+            kf.score for kf in results_search
         ], dtype=float)
 
         mu = clip_scores.mean()
@@ -139,7 +139,7 @@ class TagService:
 
         final_scores = []
 
-        for i, kf in enumerate(keyframe_results):
+        for i, kf in enumerate(results_search):
             if hasattr(kf, "tags") and kf.tags:
                 kf_tags = set(kf.tags)
             else:
@@ -151,11 +151,11 @@ class TagService:
             final_score = norm_scores[i] + boost
             final_scores.append(final_score)
         
-        for kf, fs in zip(keyframe_results, final_scores):
+        for kf, fs in zip(results_search, final_scores):
             kf.score = float(fs)
         
         reranked = sorted(
-            keyframe_results,
+            results_search,
             key=lambda x: x.score,
             reverse=True
         )

@@ -34,7 +34,7 @@ class MilvusVectorSearch:
     @staticmethod
     def _hit_to_item(hit) -> MilvusSearchResponseItem:
         return MilvusSearchResponseItem(
-            id_=hit.entity.get("id"),
+            identification=hit.entity.get("id"),
             score=hit.score,
         )
 
