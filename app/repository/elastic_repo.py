@@ -1,10 +1,16 @@
 from __future__ import annotations
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, AsyncIterable
 from elasticsearch import AsyncElasticsearch, NotFoundError
 
 
 from app.schemas.search_results import KeyframeScore
 from app.schemas.application import KeyframeInstance
+
+
+
+async def _aiter(it):
+    for x in it:
+        yield x
 
 
 class ElasticsearchKeyframeRepo:
@@ -49,11 +55,13 @@ class ElasticsearchKeyframeRepo:
                 await self.es.indices.delete(index=self.index)
             except NotFoundError:
                 pass
-                
-        if self.es.indices.exists(index=self.index):
+        
+        exists = await self.es.indices.exists(index=self.index)
+        if exists: 
             return
+       
 
-        vi_params = {
+        vi_params:  dict[str, list[str] | bool | str] = {
             "stopwords": stop_words or [],
         }
         if keep_punctuation is not None:
@@ -119,11 +127,11 @@ class ElasticsearchKeyframeRepo:
             body['ocr'] = [" ".join(item.ocr)]
         await self.es.index(index=self.index, id=_id, document=body)
 
-    async def bulk_upsert(self, docs: Iterable[KeyframeInstance], refresh: bool = True):
-        from elasticsearch.helpers import streaming_bulk, async_streaming_bulk
+    async def bulk_upsert(self, docs: AsyncIterable[KeyframeInstance], refresh: bool = True):
+        from elasticsearch.helpers import  async_streaming_bulk
 
-        def gen_actions():
-            for d in docs:
+        async def gen_actions():
+            async for d in _aiter(docs):
                 body = d.model_dump()
                 if d.ocr:
                     body["_ocr_joined"] = " ".join(d.ocr)

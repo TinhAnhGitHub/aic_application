@@ -4,8 +4,6 @@ from typing import Literal, Optional, Sequence
 from app.common.repository import MilvusVectorSearch
 from scipy.sparse import csr_matrix
 
-
-
 from app.schemas.search_results  import MilvusSearchResponseItem
 
 
@@ -33,16 +31,16 @@ class CaptionSearchRepo(MilvusVectorSearch):
     async def search_caption_dense(self, query_embedding: list[float], top_k: int, param: dict, **kwargs):
         return await self.search_dense(query_embedding, top_k, param, **kwargs)
 
-    async def construct_dense_request(self, embedding: list[float], top_k: int, param: dict) -> AnnSearchRequest:
-        return await self.construct_request_for(
+    def construct_dense_request(self, embedding: list[float], top_k: int, param: dict) -> AnnSearchRequest:
+        return  self.construct_request_for(
             data=embedding,
             anns_field=self.dense_field,
             top_k=top_k,
             param=param,
         )
 
-    async def construct_sparse_request(self, sparse_vec: csr_matrix, top_k: int, param: dict) -> AnnSearchRequest:
-        return await self.construct_request_for(
+    def construct_sparse_request(self, sparse_vec: csr_matrix, top_k: int, param: dict) -> AnnSearchRequest:
+        return self.construct_request_for(
             data=sparse_vec,            
             anns_field=self.sparse_field,
             top_k=top_k,

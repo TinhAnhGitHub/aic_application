@@ -18,6 +18,8 @@ class HistoryResult(BaseModel):
     top_idents: list[int]
 
 class SearchHistory(Document):
+    timestamp: Indexed(datetime) = Field(default_factory=datetime.now)
+    question_filename: str 
     kind: HistoryType
     created_at: datetime 
 
@@ -31,4 +33,8 @@ class SearchHistory(Document):
 
     # metadta
     tags_used: list[str] | None = None
+    class Settings:
+        indexes = [
+            [("question_filename", 1), ("created_at", -1)],
+        ]
     

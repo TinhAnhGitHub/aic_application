@@ -51,3 +51,8 @@ class TrakePath(BaseModel):
 class TrakePathResponse(BaseModel):
     paths: List[TrakePath]   
     meta: dict = Field(default_factory=dict)
+
+
+class TrakeResponse(BaseModel):
+    trake_paths: TrakePathResponse
+    raw: list[list[KeyframeScore]]

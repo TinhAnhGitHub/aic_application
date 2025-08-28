@@ -1,23 +1,18 @@
 from __future__ import annotations
 from typing import List, Optional, Sequence, Iterable, cast, Literal
 from abc import abstractmethod
-
 from pymilvus import AsyncMilvusClient, AnnSearchRequest, RRFRanker, WeightedRanker
-from pymilvus import Function, FunctionType
 from scipy.sparse import csr_matrix
 
 from app.schemas.search_results  import MilvusSearchResponseItem
-
-
 
 class MilvusVectorSearch:
     def __init__(
         self,
         uri: str,
-        token: Optional[str],
         collection: str,
     ):
-        self.client = AsyncMilvusClient(uri=uri, token=token)
+        self.client = AsyncMilvusClient(uri=uri)
         self.collection = collection
 
     async def close(self):
@@ -35,7 +30,7 @@ class MilvusVectorSearch:
     @staticmethod
     def _hit_to_item(hit) -> MilvusSearchResponseItem:
         return MilvusSearchResponseItem(
-            identification=hit.entity.get("id"),
+            identification=hit.entity.get("identification"),
             score=hit.score,
         )
 
@@ -74,7 +69,7 @@ class MilvusVectorSearch:
         )
         return self._to_items(res)
 
-    async def construct_request_for(
+    def construct_request_for(
         self,
         *,
         data: list[float] | csr_matrix,                 
@@ -109,7 +104,7 @@ class MilvusVectorSearch:
             weights = cast(Sequence[float], weights)
             ranker = WeightedRanker(*weights)
 
-        ofs = output_fields or ["id"]
+        ofs = output_fields or ["identification"]
 
         res = await self.client.hybrid_search(
             collection_name=self.collection,

@@ -1,1 +1,1 @@
-from base import MilvusVectorSearch
+from .base import MilvusVectorSearch

@@ -54,12 +54,12 @@ class KeyframeRepo:
         )
 
     async def get_many_by_identifications(
-        self, identifications: Iterable[str]
+        self, identifications: Iterable[int]
     ) -> List[KeyframeModel]:
         id_list = list(identifications)
 
         docs = await self.model.find(
-            self.model.identification.in_(list(identifications)) # type: ignore[attr-defined]
+            self.model.identification.in_(id_list) # type: ignore[attr-defined]
         ).to_list()
 
         lookup = {

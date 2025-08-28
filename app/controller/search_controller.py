@@ -54,7 +54,7 @@ class SearchController:
         self,
         result: list[MilvusSearchResponseItem]
     ) -> list[KeyframeScore]:
-        identifications = [str(r.identification) for r in result]
+        identifications = [int(r.identification) for r in result]
         keyframes = await self.keyframe_repo.get_many_by_identifications(identifications)
         id_to_kf = {kf.identification: kf for kf in keyframes}
         scores = []
@@ -77,7 +77,7 @@ class SearchController:
     async def _search_keyframe(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
         assert self.model_service is not None and self.tag_service is not None
         emb = self.model_service.embed_text(text)
-        milvus = await self.search_service.search_caption_dense(emb, topk, param)
+        milvus = await self.search_service.search_keyframe_dense(emb, topk, param)
         scored = await self._milvus_to_keyframe_score(milvus)
         if tag_boost_alpha > 0.0:
             tags = self.tag_service.scan_tags(text)
@@ -106,13 +106,12 @@ class SearchController:
         weighted: float | None 
     ):
         dense_emb = self.model_service.embed_text(text)
-        dense_req = await self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
+        dense_req = self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
 
         milvus_hits = None
         try:
             sparse_vec = self.model_service.embed_sparse_text(text)
-            sparse_req = await self.search_service.caption_search.construct_sparse_request(sparse_vec, topk, param)
-            sparse_req = await self.search_service.caption_search.construct_sparse_request(sparse_vec, topk, param)
+            sparse_req = self.search_service.caption_search.construct_sparse_request(sparse_vec, topk, param)
             if fusion == "weighted":
                 w_dense = weighted if (weighted is not None) else 0.5
                 w_sparse = 1.0 - w_dense
@@ -165,6 +164,7 @@ class SearchController:
                 weighted=req.caption.weighted
             )
             lists_in_order.append(cap)
+            per_modality.append(ModalityResult(modality="caption", items=cap))
             fusion_method = req.caption.fusion
         
         if req.ocr:

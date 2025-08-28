@@ -102,5 +102,7 @@ class ModelService:
     def embed_sparse_text(self, text: str) -> csr_matrix:
         if not self.sparse_encoder:
             raise NotImplementedError("Sparse encoder not configured")
-        return self.sparse_encoder.encode(text)
+        arr = self.sparse_encoder.encode_queries([text])
+
+        return csr_matrix(arr) if not isinstance(arr, csr_matrix) else arr
 

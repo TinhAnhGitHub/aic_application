@@ -1,32 +1,32 @@
 from typing import List, Optional, Union
 from beanie import PydanticObjectId
 from pymongo.results import DeleteResult, InsertManyResult
-from app.models.common import ChatHistory
+from app.models.history import SearchHistory
 
 
 class ChatRepo:
-    def __init__(self, model=ChatHistory):
+    def __init__(self, model=SearchHistory):
         self.model = model
 
     # ---------- CREATE ----------
-    async def create_one(self, item: Union[dict, ChatHistory]) -> ChatHistory:
+    async def create_one(self, item: Union[dict, SearchHistory]) -> SearchHistory:
         if isinstance(item, dict):
             item = self.model(**item)
         await item.insert()
         return item
 
     async def create_many(
-        self, items: List[Union[dict, ChatHistory]]
+        self, items: List[Union[dict, SearchHistory]]
     ) -> InsertManyResult:
         docs = [i if isinstance(i, self.model) else self.model(**i) for i in items]
         return await self.model.insert_many(docs)
 
-    async def get_by_id(self, id_: PydanticObjectId) -> Optional[ChatHistory]:
+    async def get_by_id(self, id_: PydanticObjectId) -> Optional[SearchHistory]:
         return await self.model.get(id_)
 
     async def get_by_question(
         self, question_filename: str, limit: int = 50
-    ) -> List[ChatHistory]:
+    ) -> List[SearchHistory]:
         return (
             await self.model.find(self.model.question_filename == question_filename)
             .sort(-self.model.timestamp)
@@ -34,7 +34,7 @@ class ChatRepo:
             .to_list()
         )
 
-    async def list_all(self, limit: int = 100, skip: int = 0) -> List[ChatHistory]:
+    async def list_all(self, limit: int = 100, skip: int = 0) -> List[SearchHistory]:
         return (
             await self.model.find_all()
             .sort(-self.model.timestamp)
@@ -51,4 +51,6 @@ class ChatRepo:
 
     async def delete_by_question(self, question_filename: str) -> int:
         res = await self.model.find(self.model.question_filename == question_filename).delete()
-        return res.deleted_count
+        if res is not None:
+            return res.deleted_count
+        return 0

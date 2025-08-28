@@ -6,14 +6,15 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from rapidfuzz import fuzz 
 from underthesea import word_tokenize
 
-from app.schemas.application import TagInstance
-from app.schemas.application import KeyframeScore
+from app.schemas.tags import TagInstance
+from app.schemas.search_results import KeyframeScore
+from app.core.logger import RichAsyncLogger
 
+logger = RichAsyncLogger(__name__)
 
 
 def vn_tokenizer(text: str) -> list[str]:
     return word_tokenize(text, format="text").split()
-
 
 class TagService:
     def __init__(
@@ -50,7 +51,23 @@ class TagService:
             10, 
             min(preselect_k, len(tag_list))
         )
+        logger.info(
+            "TagService initialized",
+            extra={
+                "tags_count": len(self.tag_list),
+                "preselect_k": self._preselect_k,
+                "weights": {
+                    "bm25": self.bm25_weight,
+                    "tfidf": self.tfidf_weight,
+                    "rf": self.rf_weight,
+                },
+                "tfidf_vocab_size": getattr(self._tfidf_word, "vocabulary_", None) and len(self._tfidf_word.vocabulary_),
+                "tokenizer": "vn_tokenizer",
+                "ngram_range": (1, 2),
+            },
+        )
 
+        
     def scan_tags(
         self,
         user_query: str,
@@ -65,7 +82,7 @@ class TagService:
         
         q_word = self._tfidf_word.transform([user_query])
 
-        scored_words = (self._X_word @ q_word.T).toarray().ravel()
+        scored_words = (self._X_word @ q_word.transpose()).toarray().ravel()
 
         M = min(
             self._preselect_k, len(self.tag_list)
@@ -108,6 +125,8 @@ class TagService:
                 tag_name=self.tag_list[idx],
                 tag_score=score
             ))
+        
+        logger.info(f"Top tags: {[t.tag_name for t in results]}")
         return results
     
 
@@ -134,8 +153,11 @@ class TagService:
         ], dtype=float)
 
         mu = clip_scores.mean()
-        sigma = clip_scores.std() if clip_scores.std() > 1e-6 else 1.0
-        norm_scores = (clip_scores - mu) / sigma
+        sigma = clip_scores.std()
+        if sigma < 1e-6:
+            norm_scores = clip_scores - mu
+        else:
+            norm_scores = (clip_scores - mu) / sigma
 
         final_scores = []
 
@@ -147,7 +169,7 @@ class TagService:
         
 
             m = len(kf_tags & top_tag_names)
-            boost = alpha * np.log1p(m) * sigma
+            boost = alpha * np.log1p(m) 
             final_score = norm_scores[i] + boost
             final_scores.append(final_score)
         

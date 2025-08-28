@@ -2,7 +2,7 @@ from pydantic import BaseModel, Field
 import numpy as np
 
 
-class FusionWeights:
+class FusionWeights(BaseModel):
     w_visual: float = Field(default=0.5)
     w_caption: float = Field(default=0.3)
     w_ocr: float = Field(default=0.2)
@@ -11,19 +11,15 @@ class FusionWeights:
         """
         scale make sure total = 1
         """
-        weights = np.array([
-            self.w_visual, self.w_caption, self.w_ocr
-        ], dtype=float)
-
+        weights = np.array([self.w_visual, self.w_caption, self.w_ocr], dtype=float)
         min_val, max_val = weights.min(), weights.max()
-
         if min_val == max_val:
             normed = np.ones_like(weights) / len(weights)
-        
         else:
             normed = (weights - min_val) / (max_val - min_val)
-        
-        return normed[0], normed[1], normed[2]
+        s = float(normed.sum()) or 1.0
+        normed = normed / s
+        return float(normed[0]), float(normed[1]), float(normed[2])
 
 
 
