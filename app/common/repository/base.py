@@ -2,10 +2,11 @@ from __future__ import annotations
 from typing import List, Optional, Sequence, Iterable, cast, Literal
 from abc import abstractmethod
 
-from pymilvus import AsyncMilvusClient, AnnSearchRequest
+from pymilvus import AsyncMilvusClient, AnnSearchRequest, RRFRanker, WeightedRanker
 from pymilvus import Function, FunctionType
+from scipy.sparse import csr_matrix
 
-from app.schemas.application import MilvusSearchResponseItem
+from app.schemas.search_results  import MilvusSearchResponseItem
 
 
 
@@ -73,29 +74,28 @@ class MilvusVectorSearch:
         )
         return self._to_items(res)
 
-    # ---- build a request (for combination) ----
-    async def construct_request(
+    async def construct_request_for(
         self,
-        embedding: list[float],
+        *,
+        data: list[float] | csr_matrix,                 
+        anns_field: str,      
         top_k: int,
         param: dict,
         expr: Optional[str] = None,
     ) -> AnnSearchRequest:
-        ofs = ["id"]
 
+        
         return AnnSearchRequest(
-            data=[embedding],
-            anns_field=self.dense_field,
+            data=[data],
+            anns_field=anns_field,
             param=param,
             limit=top_k,
             expr=expr,
-            output_fields=ofs,
         )
-
-    # ---- combination (hybrid, multi-caption, etc.) ----
     async def search_combination(
         self,
         requests: list[AnnSearchRequest],
+        output_fields: list[str],   
         rerank: Literal["rrf", "weighted"] = "rrf",
         weights: Optional[Sequence[float]] = None,
     ):
@@ -104,27 +104,18 @@ class MilvusVectorSearch:
             assert len(requests) == len(weights), "Weights length must match requests"
 
         if rerank == "rrf":
-            ranker = Function(
-                name="rrf_ranker",
-                input_field_names=[],
-                function_type=FunctionType.RERANK,
-                params={"reranker": "rrf", "k": 60},
-            )
+            ranker = RRFRanker(k=60)
         else:
-            ranker = Function(
-                name="weighted_ranker",
-                input_field_names=[],
-                function_type=FunctionType.RERANK,
-                params={"reranker": "weighted", "weights": weights, "norm_score": True},
-            )
+            weights = cast(Sequence[float], weights)
+            ranker = WeightedRanker(*weights)
 
-        ofs = ["id"]
+        ofs = output_fields or ["id"]
 
-
-        res = await self.client.search_combination(
+        res = await self.client.hybrid_search(
             collection_name=self.collection,
-            requests=requests,
-            output_fields=ofs,
+            reqs=requests,
+            output_fields=ofs,            #
             ranker=ranker,
-        )
+        )   
         return self._to_items(res)
+    

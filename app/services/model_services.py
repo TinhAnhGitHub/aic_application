@@ -1,16 +1,13 @@
-from unilm.beit3 import modeling_finetune
+from app.services.unilm.beit3 import modeling_finetune
 from torchvision import transforms
 from transformers import XLMRobertaTokenizer
 from timm import create_model
-import timm
 from timm.data.constants import IMAGENET_INCEPTION_MEAN, IMAGENET_INCEPTION_STD
 from sentence_transformers import SentenceTransformer
-import os
-from typing import List
 import numpy as np
 import torch
-from PIL import Image
-
+from scipy.sparse import csr_matrix
+from app.services.sparse_encoder import MilvusSparseEncoder
 
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -67,8 +64,10 @@ class ModelService:
         beit3_ckpt: str,
         beit3_tokenizer_path: str,
         text_model_name: str = "AITeamVN/Vietnamese_Embedding",
+        sparse_encoder: MilvusSparseEncoder | None = None
     ):
         self.device = DEVICE
+        self.sparse_encoder = sparse_encoder
         self._init_text(text_model_name)
         self._init_vision(beit3_ckpt, beit3_tokenizer_path)
 
@@ -97,21 +96,11 @@ class ModelService:
             device=self.device,
         )
         embs = torch.nn.functional.normalize(embs, p=2, dim=-1)
-        return embs[0].detach().cpu().numpy().astype(np.float32)
-        
+        return embs[0].detach().cpu().numpy().astype(np.float32).tolist()
+    
 
-    @torch.inference_mode()
-    def embed_images(self, images: List[Image.Image], batch_size: int = 32) -> np.ndarray:
-        all_feats = []
-        for i in range(0, len(images), batch_size):
-            batch_imgs = images[i:i+batch_size]
-            inputs = self.processor.process_batch(batch_imgs).to(self.device, dtype=TORCH_DTYPE)
-            img_feat, _ = self.vision_model(image=inputs, only_infer=True)
-            img_feat = torch.nn.functional.normalize(img_feat, p=2, dim=-1)
-            all_feats.append(img_feat.detach().cpu())
-
-        if not all_feats:
-            return np.zeros((0, 0), dtype=np.float32)
-
-        return torch.cat(all_feats, dim=0).numpy().astype(np.float32)
+    def embed_sparse_text(self, text: str) -> csr_matrix:
+        if not self.sparse_encoder:
+            raise NotImplementedError("Sparse encoder not configured")
+        return self.sparse_encoder.encode(text)
 

@@ -1,15 +1,26 @@
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple, cast
-import math
-from statistics import mean, pstdev
-import asyncio
-from typing import Literal
+from typing import Dict, List, Optional, Tuple
 
-from app.schemas.application import (
-    EventSearch,
-    EventHit,
+
+from app.schemas.search_queries import SingleSearchRequest, TrakeSearchRequest, FusionMethod
+from app.schemas.search_results import (
     KeyframeScore,
-    MilvusSearchResponseItem,
-        
+    ModalityResult,
+    SingleSearchResponse,
+    TrakePath,
+    TrakePathResponse,
+    FusionSummary,
+    RRFDetail,
+    WeightedDetail, 
+    MilvusSearchResponseItem
+)
+
+from app.services.fusion_services import (
+    rrf_fuse,
+    weighted_fuse,
+    organize_and_dedup_group_video_kf,
+    normalize_event_scores_kf,
+    beam_sequences_single_bucket_kf,
+    rerank_across_videos_kf
 )
 
 
@@ -17,14 +28,9 @@ from app.repository.elastic_repo import ElasticsearchKeyframeRepo
 from app.repository.keyframe_repo import KeyframeRepo
 from app.services.tag_services import TagService
 from app.services.search_services import SearchService
-from app.schemas.search_settings import FusionWeights, TopKReturn, ControllerParams
+from app.schemas.search_settings import TopKReturn, ControllerParams
 from app.services.model_services import ModelService
-from app.models.common import CaptionSearch, KeyframeSearch, OCRSearch
 
-
-
-def _log1p_if_positive(x: float) -> float:
-    return math.log1p(max(x, 0.0))
 
 
 class SearchController:
@@ -32,14 +38,14 @@ class SearchController:
         self,
         ocr_repo: ElasticsearchKeyframeRepo,
         keyframe_repo: KeyframeRepo,
-        search_embed: SearchService,
+        search_service: SearchService,
         tag_service: TagService,
         model_service: ModelService
         
     ):
         self.ocr_repo = ocr_repo
         self.keyframe_repo = keyframe_repo
-        self.search_embed = search_embed
+        self.search_service = search_service
         self.tag_service = tag_service
         self.model_service = model_service
 
@@ -68,286 +74,180 @@ class SearchController:
                 )
         return scores    
 
-    async def keyframe_search(self, keyframe_search: KeyframeSearch, topk_visual: int, kf_search_param: dict) -> list[KeyframeScore]:
-        
-        keyframe_search_text =  cast(str, keyframe_search.keyframe_search_text)
-        embedding_text = self.model_service.embed_text(
-            keyframe_search_text
-        )
+    async def _search_keyframe(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
+        assert self.model_service is not None and self.tag_service is not None
+        emb = self.model_service.embed_text(text)
+        milvus = await self.search_service.search_caption_dense(emb, topk, param)
+        scored = await self._milvus_to_keyframe_score(milvus)
+        if tag_boost_alpha > 0.0:
+            tags = self.tag_service.scan_tags(text)
+            scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
+        return scored
 
-        tags = None
-        if keyframe_search.tag_boost_alpha > 0.0:
-            ## Using tags as a boost
-            tags = self.tag_service.scan_tags(
-                user_query=keyframe_search_text,
-            )
-
-        # keyframe search 
-        results = await self.search_embed.search_keyframe_dense(
-            query_embedding=embedding_text,
-            top_k=topk_visual,
-            param=kf_search_param,
-        )
-
-        results = await self._milvus_to_keyframe_score(results)
-
-        if tags:
-            results = self.tag_service.rerank_keyframe_search_with_tags(
-                tags=tags,
-                results_search=results,
-                alpha=keyframe_search.tag_boost_alpha
-            )
-
-        return results
-
-
-    async def caption_search(self, caption_search: CaptionSearch, topk_caption: int, cap_search_param: dict) -> list[KeyframeScore]:
-        caption_search_text = cast(str, caption_search.caption_search_text)
-
-        embedding_text = self.model_service.embed_text(
-            caption_search_text
-        )
-        tags = None
-        if caption_search.tag_boost_alpha > 0.0:
-            tags = self.tag_service.scan_tags(
-                user_query=caption_search_text,
-            )
-
-        # caption search
-        results = await self.search_embed.search_caption_dense(
-            query_embedding=embedding_text,
-            top_k=topk_caption,
-            param=cap_search_param,
-        )
-        results = await self._milvus_to_keyframe_score(results)
-
-        if tags:
-            results = self.tag_service.rerank_keyframe_search_with_tags(
-                tags=tags,
-                results_search=results,
-                alpha=caption_search.tag_boost_alpha
-            )
-        return results
-
-    async def ocr_search(self, ocr_search: OCRSearch, topk_ocr: int) -> list[KeyframeScore]:
-        results = await self.ocr_repo.search(
-            query_text=ocr_search.list_ocr,
-            top_k=topk_ocr,
-        )
-        return results
-
-    def reciprocal_ranking(
-        self,
-        keyframe_results: list[KeyframeScore],
-        caption_results: list[KeyframeScore],
-        ocr_results: list[KeyframeScore],
-    ):
-        K = 60
-        def ranks(items: list[KeyframeScore]) -> dict[int,int]:
-            if not items:
-                return {}
-
-            ordered = sorted(items, key=lambda x: x.score, reverse=True)
-            return{
-                it.identification: idx + 1 for idx, it in enumerate(ordered)
-            }
-        
-        kf_ranks = ranks(keyframe_results)
-        cap_ranks = ranks(caption_results)
-        ocr_ranks = ranks(ocr_results)
-
-        rep: dict[int, KeyframeScore] = {}
-
-        def get_rep(rep: dict[int, KeyframeScore], it: KeyframeScore):
-            if it.identification not in rep:
-                rep[it.identification] = it
-            
-
-        for it in keyframe_results:
-            get_rep(rep, it)
-        for it in caption_results:
-            get_rep(rep, it)
-        for it in ocr_results: 
-            get_rep(rep, it)
-        
-        all_ids: set[int] = set(kf_ranks) | set(cap_ranks) | set(ocr_ranks)
-        fused: list[KeyframeScore] = []
-
-        for ident in all_ids:
-            s = 0.0
-            if ident in kf_ranks:
-                s += 1.0 / (K + kf_ranks[ident])
-            
-            if ident in cap_ranks:
-                s += 1.0 / (K + cap_ranks[ident])
-            
-            if ident in ocr_ranks:
-                s += 1.0 / (K + ocr_ranks[ident])
-            
-            r = rep[ident]
-            fused.append(
-                KeyframeScore(
-                    identification=r.identification,
-                    group_id=r.group_id,
-                    video_id=r.video_id,
-                    keyframe_id=r.keyframe_id,
-                    tags=r.tags,
-                    ocr=r.ocr,
-                    score=s,
-                )
-            )
-        
-        fused.sort(key=lambda x: x.score, reverse=True)
-        return fused
-
-
-
-    def weighted_ranking(
-        self,
-        keyframe_results: list[KeyframeScore],
-        caption_results: list[KeyframeScore],
-        ocr_results: list[KeyframeScore],
-        weights: FusionWeights
-    ):
-        def ranks(items: list[KeyframeScore]) -> dict[int, float]:
-            if not items:
-                return {}
-
-            scores = [it.score for it in items]
-            mu = mean(scores)
-            sigma = pstdev(scores) if pstdev(scores) > 1e-6 else 1.0
-
-            return {
-                it.identification: (it.score - mu) / sigma for it in items
-            }
-        
-        kf_ranks = ranks(keyframe_results)
-        cap_ranks = ranks(caption_results)
-        ocr_ranks = ranks(ocr_results)
-
-        fused: dict[int, KeyframeScore] = {}
-
-        def get_fused(fused: dict[int, KeyframeScore], it: KeyframeScore):
-            if it.identification not in fused:
-                fused[it.identification] = it
-            
-
-        for it in keyframe_results:
-            get_fused(fused, it)
-        for it in caption_results:
-            get_fused(fused, it)
-        for it in ocr_results: 
-            get_fused(fused, it)
-        
-        all_ids: set[int] = set(kf_ranks) | set(cap_ranks) | set(ocr_ranks)
-        out: list[KeyframeScore] = []
-
-        for ident in all_ids:
-            s = 0.0
-            if ident in kf_ranks:
-                s += weights.w_visual * kf_ranks[ident]
-            
-            if ident in cap_ranks:
-                s += weights.w_caption * cap_ranks[ident]
-            
-            if ident in ocr_ranks:
-                s += weights.w_ocr * ocr_ranks[ident]
-            
-            r = fused[ident]
-            out.append(
-                KeyframeScore(
-                    identification=r.identification,
-                    group_id=r.group_id,
-                    video_id=r.video_id,
-                    keyframe_id=r.keyframe_id,
-                    tags=r.tags,
-                    ocr=r.ocr,
-                    score=s,
-                )
-            )
-        
-        out.sort(key=lambda x: x.score, reverse=True)
-        return out  
     
 
+    # async def _search_caption_dense(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
+    #     assert self.model_service is not None and self.tag_service is not None
+    #     emb = self.model_service.embed_text(text)
+    #     milvus = await self.search_service.search_caption_dense(emb, topk, param)
+    #     scored = await self._milvus_to_keyframe_score(milvus)
+    #     if tag_boost_alpha > 0.0:
+    #         tags = self.tag_service.scan_tags(text)
+    #         scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
+    #     return scored
 
-
-    async def single_search(
+    async def _search_caption(
         self,
-        keyframe_search: Optional[KeyframeSearch],
-        caption_search: Optional[CaptionSearch],
-        ocr_search: Optional[OCRSearch],
-        top_k_return: TopKReturn,
-        fusion_weights: FusionWeights | None,
-        controller_params: ControllerParams,
-    ) -> List[KeyframeScore]:
-        tasks = []
-        if keyframe_search:
-            tasks.append(
-                self.keyframe_search(
-                    keyframe_search=keyframe_search,
-                    topk_visual=top_k_return.topk_visual,
-                    kf_search_param=controller_params.kf_search_param or {}
+        text: str,
+        topk: int,
+        param:dict,
+        tag_boost_alpha: float,
+        fusion: FusionMethod,
+        weighted: float | None 
+    ):
+        dense_emb = self.model_service.embed_text(text)
+        dense_req = await self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
+
+        milvus_hits = None
+        try:
+            sparse_vec = self.model_service.embed_sparse_text(text)
+            sparse_req = await self.search_service.caption_search.construct_sparse_request(sparse_vec, topk, param)
+            sparse_req = await self.search_service.caption_search.construct_sparse_request(sparse_vec, topk, param)
+            if fusion == "weighted":
+                w_dense = weighted if (weighted is not None) else 0.5
+                w_sparse = 1.0 - w_dense
+                milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
+                    dense_req=dense_req,
+                    sparse_req=sparse_req,
+                    rerank="weighted",
+                    weights=[w_dense, w_sparse],
                 )
-            )
-        else:
-            tasks.append(asyncio.sleep(0, result=[]))
-
-        if caption_search:
-            tasks.append(
-                self.caption_search(
-                    caption_search=caption_search,
-                    topk_caption=top_k_return.topk_caption,
-                    cap_search_param=controller_params.cap_search_param or {}
+            else:
+                milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
+                    dense_req=dense_req,
+                    sparse_req=sparse_req,
+                    rerank="rrf",
                 )
-            )
-        else:
-            tasks.append(asyncio.sleep(0, result=[]))
+        except NotImplementedError:
+            milvus_hits = await self.search_service.search_caption_dense(dense_emb, topk, param)
 
-        if ocr_search:
-            tasks.append(
-                self.ocr_search(
-                    ocr_search=ocr_search,
-                    topk_ocr=top_k_return.topk_ocr
-                )
-            )
-        else:
-            tasks.append(asyncio.sleep(0, result=[]))
+        scored = await self._milvus_to_keyframe_score(milvus_hits)
+        if tag_boost_alpha > 0.0:
+            tags = self.tag_service.scan_tags(text)
+            scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
+        return scored
 
-        keyframe_results, caption_results, ocr_results = await asyncio.gather(*tasks)
+    async def _search_ocr(self, text: str, topk: int) -> List[KeyframeScore]:
+        assert self.ocr_repo is not None, "ocr_repo not set"
+        return await self.ocr_repo.search(query_text=text, top_k=topk)
 
-        if fusion_weights is None:
-            fused = self.reciprocal_ranking(
-                keyframe_results=keyframe_results,
-                caption_results=caption_results,
-                ocr_results=ocr_results
+
+
+
+
+    async def single_search(self, req: SingleSearchRequest, topk: TopKReturn, ctrl: ControllerParams) -> SingleSearchResponse:
+        per_modality: list[ModalityResult] = []
+        lists_in_order: List[List[KeyframeScore]] = []
+
+        if req.keyframe:
+            kf = await self._search_keyframe(req.keyframe.text, topk.topk_visual, ctrl.kf_search_param, req.keyframe.tag_boost_alpha)
+            per_modality.append(ModalityResult(modality="keyframe", items=kf))
+            lists_in_order.append(kf)
+        
+        fusion_method = 'rrf'
+        if req.caption:
+            cap = await self._search_caption(
+                text=req.caption.text,
+                topk=topk.topk_caption,
+                param=ctrl.cap_search_param,
+                tag_boost_alpha=req.caption.tag_boost_alpha,
+                fusion=req.caption.fusion,
+                weighted=req.caption.weighted
             )
+            lists_in_order.append(cap)
+            fusion_method = req.caption.fusion
+        
+        if req.ocr:
+            ocr = await self._search_ocr(req.ocr.text, topk.topk_ocr)
+            per_modality.append(ModalityResult(modality="ocr", items=ocr))
+            lists_in_order.append(ocr)
+
+        if not any(lists_in_order):
+            return SingleSearchResponse(fused=[], per_modality=[], fusion=FusionSummary(method="rrf", detail=RRFDetail(k=60)), meta={})
+
+        if fusion_method == "weighted":
+            wv, wc, wo = ctrl.fusion.ensure_scale()
+            used_weights: List[float] = []
+            for m in [pm.modality for pm in per_modality]:
+                used_weights.append({"keyframe": wv, "caption": wc, "ocr": wo}[m])
+            fused = weighted_fuse(lists_in_order, used_weights)
+            fusion_summary = FusionSummary(method="weighted", detail=WeightedDetail(weights=used_weights, norm_score=True))
         else:
-            fused = self.weighted_ranking(
-                keyframe_results=keyframe_results,
-                caption_results=caption_results,
-                ocr_results=ocr_results,
-                weights=fusion_weights
-            )
-        
-        
-            fused = fused[:top_k_return.final_topk]
-        
-        return fused
+            fused = rrf_fuse(lists_in_order, k=60)
+            fusion_summary = FusionSummary(method="rrf", detail=RRFDetail(k=60))
+
+        fused = fused[:topk.final_topk]
+        return SingleSearchResponse(fused=fused, per_modality=per_modality, fusion=fusion_summary, meta={})
     
 
+    
     async def trake_search(
-        self, 
-        events: list[EventSearch],
-    ):
-        all_results: list[list[EventHit]] = []
-        for event in events:
-            
+        self,
+        req: TrakeSearchRequest,
+        *,
+        topk: TopKReturn,
+        ctrl: ControllerParams,
+        window: int = 6,
+        beam_size: int = 50,
+        per_bucket_top_k: Optional[int] = None,
+        global_top_k: Optional[int] = 20,
+        norm_method: str = "zscore",
+        norm_temperature: float = 1.0,
+        per_event_cap: Optional[int] = None
+    ) -> tuple[TrakePathResponse, list[list[KeyframeScore]]]:
+        """
+        For each EventQuery (sorted by event_order):
+          1) Run single_search for the event query.
+          2) Build the event's candidate pool by UNION of per-modality lists (no cross-event fusion).
+          3) Group by (group_id, video_id), de-dup per event (window).
+          4) Normalize per event, beam search per bucket (temporal prior).
+          5) Global rerank across buckets and return top paths.
 
+        Return
+            - The TrakePathResponse
+            - The list[list[keyframe_score]] with raw score
+        """
 
-            
-            
+        events_sorted = sorted(req.events, key=lambda e: e.event_order)
+        raw_hits_per_event: list[list[KeyframeScore]] = []
+
+        for ev in events_sorted:
+            single = await self.single_search(ev.query, topk, ctrl)
+            fused_list: List[KeyframeScore] = single.fused
+            if per_event_cap is not None and per_event_cap > 0:
+                fused_list = fused_list[:per_event_cap]
+
+            raw_hits_per_event.append(fused_list)
         
+        by_group_video = organize_and_dedup_group_video_kf(raw_hits_per_event, window=window)
 
-
-
+        by_bucket_paths: Dict[Tuple[str, str], List[Tuple[List[KeyframeScore], float]]] = {}
+        for bucket, event_lists in by_group_video.items():
+            norm_lists = normalize_event_scores_kf(
+                event_lists,
+                method=norm_method,
+                temperature=norm_temperature,
+            )
+            paths = beam_sequences_single_bucket_kf(
+                event_lists=norm_lists,
+                beam_size=beam_size,
+                K=per_bucket_top_k,
+            )
+            if paths:
+                by_bucket_paths[bucket] = paths
+        
+        reranked = rerank_across_videos_kf(by_bucket_paths, top_k=global_top_k)
+        trake_paths: list[TrakePath] = [
+            TrakePath(items=path, score=score) for path, score in reranked
+        ]
+        return TrakePathResponse(paths=trake_paths, meta={}), raw_hits_per_event

@@ -5,6 +5,15 @@ from app.schemas.search_queries import SearchModality, FusionMethod
 
 
 
+
+class MilvusSearchResponseItem(BaseModel):
+    """
+    Response item schema for Milvus vector search results.
+    """
+    identification: int = Field(..., description="The identification of the keyframe, corresponding to the index of the embeddings in the Milvus Collection")
+    score: float = Field(..., description="The similarity score of the retrieved item.")
+
+
 class RRFDetail(BaseModel):
     k: int = 60
 

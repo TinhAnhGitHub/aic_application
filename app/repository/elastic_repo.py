@@ -3,8 +3,8 @@ from typing import Iterable, List, Optional, Sequence
 from elasticsearch import AsyncElasticsearch, NotFoundError
 
 
-from app.schemas.application import KeyframeInstance, KeyframeScore
-
+from app.schemas.search_results import KeyframeScore
+from app.schemas.application import KeyframeInstance
 
 
 class ElasticsearchKeyframeRepo:
@@ -36,7 +36,7 @@ class ElasticsearchKeyframeRepo:
         )
         self.index = index
     
-    def ensure_index(
+    async def ensure_index(
         self,
         recreate: bool = False,
         stop_words: list[str] | None = None,
@@ -46,7 +46,7 @@ class ElasticsearchKeyframeRepo:
     ):
         if recreate:
             try:
-                self.es.indices.delete(index=self.index)
+                await self.es.indices.delete(index=self.index)
             except NotFoundError:
                 pass
                 
@@ -105,22 +105,22 @@ class ElasticsearchKeyframeRepo:
             },
         }
 
-        self.es.indices.create(index=self.index, body=body)
+        await self.es.indices.create(index=self.index, body=body)
 
     @staticmethod
     def _make_id(d: KeyframeInstance)->str:
         return f"{d.group_id}::{d.video_id}::{d.keyframe_id}"
         
-    def upsert(self, item: KeyframeInstance):
+    async def upsert(self, item: KeyframeInstance):
         _id = self._make_id(item)
         body = item.model_dump(mode="json")
         if item.ocr:
             body["_ocr_joined"] = " ".join(item.ocr)
             body['ocr'] = [" ".join(item.ocr)]
-        self.es.index(index=self.index, id=_id, document=body)
+        await self.es.index(index=self.index, id=_id, document=body)
 
-    def bulk_upsert(self, docs: Iterable[KeyframeInstance], refresh: bool = True):
-        from elasticsearch.helpers import streaming_bulk
+    async def bulk_upsert(self, docs: Iterable[KeyframeInstance], refresh: bool = True):
+        from elasticsearch.helpers import streaming_bulk, async_streaming_bulk
 
         def gen_actions():
             for d in docs:
@@ -135,16 +135,16 @@ class ElasticsearchKeyframeRepo:
                     "_source": body,
                 }
 
-        for ok, _ in streaming_bulk(self.es, gen_actions()):
+        async for ok, _ in async_streaming_bulk(self.es, gen_actions()):
             if not ok:
                 pass
         if refresh:
-            self.es.indices.refresh(index=self.index)
+            await self.es.indices.refresh(index=self.index)
     
-    def get(self, group_id: str, video_id: str, keyframe_id: str) -> Optional[KeyframeInstance]:
+    async def get(self, group_id: str, video_id: str, keyframe_id: str) -> Optional[KeyframeInstance]:
         _id = f"{group_id}::{video_id}::{keyframe_id}"
         try:
-            resp = self.es.get(index=self.index, id=_id)
+            resp = await self.es.get(index=self.index, id=_id)
         except NotFoundError:
             return None
         return KeyframeInstance(**resp["_source"])
