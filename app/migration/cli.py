@@ -2,18 +2,28 @@ import typer
 import numpy as np
 from pathlib import Path
 import asyncio
-from app.migration.helper import _ensure_caption_collection, _ensure_keyframe_collection
+import os
+import sys
+
+ROOT_DIR = os.path.abspath(
+    os.path.join(__name__, '..')
+)
+print(f"{ROOT_DIR=}")
+sys.path.insert(0, ROOT_DIR)
 
 from pymilvus import(
     AsyncMilvusClient,
 )
 
-
+from app.migration.helper import _ensure_caption_collection, _ensure_keyframe_collection
 from app.core.config import settings
 from app.repository.keyframe_repo import init_mongo, KeyframeRepo
 from app.repository.elastic_repo import ElasticsearchKeyframeRepo
 from app.schemas.application import KeyframeInstance
-from app.services.sparse_encoder import MilvusSparseEncoder
+# from app.services.sparse_encoder import MilvusSparseEncoder
+
+
+
 from app.migration.helper import (
     _collect_rows_from_fs,
     _build_bm25_corpus,
@@ -21,6 +31,9 @@ from app.migration.helper import (
     _insert_caption_milvus,
     _insert_mongo,
 )
+from app.core.logger import RichAsyncLogger
+
+logger = RichAsyncLogger(__name__)
 
 
 app_cli = typer.Typer(
@@ -33,6 +46,7 @@ def init_collection(
     keyframe_embedding_path: Path = typer.Option(..., help="Path to keyframe embeddings .npy"),
     caption_embedding_path: Path = typer.Option(..., help="Path to the caption embeddings .npy"),
 ):
+    print("HI")
     async def _run():
         kf = np.load(keyframe_embedding_path, mmap_mode="r")
         cap = np.load(caption_embedding_path, mmap_mode="r")
@@ -111,3 +125,6 @@ def ingest_all(
 
 
     asyncio.run(_run())
+
+if __name__ == "__main__":
+    app_cli()

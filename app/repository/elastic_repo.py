@@ -9,7 +9,7 @@ from app.schemas.application import KeyframeInstance
 
 
 async def _aiter(it):
-    for x in it:
+    async for x in it:
         yield x
 
 
@@ -124,7 +124,7 @@ class ElasticsearchKeyframeRepo:
         body = item.model_dump(mode="json")
         if item.ocr:
             body["_ocr_joined"] = " ".join(item.ocr)
-            body['ocr'] = [" ".join(item.ocr)]
+            body['ocr'] = item.ocr
         await self.es.index(index=self.index, id=_id, document=body)
 
     async def bulk_upsert(self, docs: AsyncIterable[KeyframeInstance], refresh: bool = True):

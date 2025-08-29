@@ -108,27 +108,23 @@ class SearchController:
         dense_emb = self.model_service.embed_text(text)
         dense_req = self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
 
-        milvus_hits = None
-        try:
-            sparse_vec = self.model_service.embed_sparse_text(text)
-            sparse_req = self.search_service.caption_search.construct_sparse_request(sparse_vec, topk, param)
-            if fusion == "weighted":
-                w_dense = weighted if (weighted is not None) else 0.5
-                w_sparse = 1.0 - w_dense
-                milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
-                    dense_req=dense_req,
-                    sparse_req=sparse_req,
-                    rerank="weighted",
-                    weights=[w_dense, w_sparse],
-                )
-            else:
-                milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
-                    dense_req=dense_req,
-                    sparse_req=sparse_req,
-                    rerank="rrf",
-                )
-        except NotImplementedError:
-            milvus_hits = await self.search_service.search_caption_dense(dense_emb, topk, param)
+        sparse_req = self.search_service.caption_search.construct_sparse_request(text, topk, {"metric_type": "BM25"})
+        
+        if fusion=='weighted':
+            w_dense = weighted if (weighted is not None) else 0.5
+            w_sparse = 1.0 - w_dense
+            milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
+                dense_req=dense_req,
+                sparse_req=sparse_req,
+                rerank='weighted',
+                weights=[w_dense, w_sparse]
+            )
+        else:
+            milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
+                dense_req=dense_req,
+                sparse_req=sparse_req,
+                rerank='rrf',
+            )
 
         scored = await self._milvus_to_keyframe_score(milvus_hits)
         if tag_boost_alpha > 0.0:

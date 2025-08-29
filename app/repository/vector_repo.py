@@ -39,7 +39,7 @@ class CaptionSearchRepo(MilvusVectorSearch):
             param=param,
         )
 
-    def construct_sparse_request(self, sparse_vec: csr_matrix, top_k: int, param: dict) -> AnnSearchRequest:
+    def construct_sparse_request(self, sparse_vec: csr_matrix | str, top_k: int, param: dict) -> AnnSearchRequest:
         return self.construct_request_for(
             data=sparse_vec,            
             anns_field=self.sparse_field,
@@ -58,7 +58,7 @@ class CaptionSearchRepo(MilvusVectorSearch):
             requests=[dense_req, sparse_req],
             rerank=rerank,
             weights=weights,
-            output_fields=["id"],  
+            output_fields=["identification"],  
         )
 
 

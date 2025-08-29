@@ -10,11 +10,18 @@ import typer
 from pymilvus import(
     AsyncMilvusClient,
     DataType,
+    FieldSchema,
+    CollectionSchema,
+    FunctionType,
+    Function
 )
 
 from scipy.sparse import csr_matrix
 from app.core.config import settings
 from app.repository.keyframe_repo import KeyframeRepo
+from app.core.logger import RichAsyncLogger
+
+logger = RichAsyncLogger(__name__)
 
 app_cli = typer.Typer(
     add_completion=False, help="Hotspot Search - Data Migration CLI"
@@ -80,12 +87,26 @@ async def _ensure_keyframe_collection(client: AsyncMilvusClient, dim: int):
     name = settings.milvus_collection_keyframe
     exists = await client.has_collection(collection_name=name)
 
+    logger.info(f"Collection name: {name}. Exist: {exists}")
+
     if not exists:
         fields = [
-            {"name": "id", "description": "primary id", "type": DataType.INT64, "is_primary": True, "auto_id": False},
-            {"name": "kf_embedding", "description": "keyframe dense embedding", "type": DataType.FLOAT_VECTOR, "params": {"dim": dim}},
+            FieldSchema(
+                name="id",
+                dtype=DataType.INT64,
+                is_primary=True,
+                auto_id=False,
+                description="primary id"
+            ),
+            FieldSchema(
+                name="kf_embedding",
+                dtype=DataType.FLOAT_VECTOR,
+                dim=dim,
+                description="keyframe dense embedding"
+            ),
         ]
-        await client.create_collection(collection_name=name, fields=fields, description="Keyframe dense vectors")
+        schema = CollectionSchema(fields, description="Keyframe dense vectors")
+        await client.create_collection(collection_name=name, schema=schema, description="Keyframe dense vectors")
         index_params = client.prepare_index_params()
         index_params.add_index(
             field_name='kf_embedding',
@@ -95,10 +116,10 @@ async def _ensure_keyframe_collection(client: AsyncMilvusClient, dim: int):
         )
         await client.create_index(
             collection_name=name,
-            index_name="idx_kf",
-            field_name="kf_embedding",
             index_params=index_params
         )
+        
+
     await client.load_collection(collection_name=name)
 
 
@@ -143,39 +164,49 @@ def _build_bm25_corpus(rows: List[KfRow]) -> List[str]:
     return docs
 
 
-async def _ensure_caption_collection(client: AsyncMilvusClient, dense_dim: int, has_sparse: bool):
-    name = settings.milvus_collection_caption
-    exists = await client.has_collection(collection_name=name)
+async def _ensure_caption_collection(
+    client,
+    dense_dim: int,
+    name: str = "caption",
+    has_sparse: bool = True,
+):
+    schema = client.create_schema(auto_id=False, enable_dynamic_field=False, description="Caption dense/sparse vectors")
+    schema.add_field("id", DataType.INT64, is_primary=True)
+    schema.add_field("caption_text", DataType.VARCHAR, max_length=32768, enable_analyzer=True)
+    schema.add_field("caption_embedding", DataType.FLOAT_VECTOR, dim=dense_dim)
+    if has_sparse:
+        schema.add_field("caption_sparse", DataType.SPARSE_FLOAT_VECTOR)
+        schema.add_function(Function(
+            name="bm25_caption",
+            input_field_names=["caption_text"],
+            output_field_names=["caption_sparse"],
+            function_type=FunctionType.BM25,
+        ))
 
-    if not exists:
-        fields = [
-            {"name": "id", "description": "primary id", "type": DataType.INT64, "is_primary": True, "auto_id": False},
-            {"name": "caption_embedding", "description": "caption dense embedding", "type": DataType.FLOAT_VECTOR, "params": {"dim": dense_dim}},
-        ]
-        if has_sparse:
-            fields.append({"name": "caption_sparse", "description": "caption sparse vector", "type": DataType.SPARSE_FLOAT_VECTOR})
-        await client.create_collection(collection_name=name, fields=fields, description="Caption dense/sparse vectors")
-        index_params = client.prepare_index_params()
+    if not await client.has_collection(name):
+        await client.create_collection(collection_name=name, schema=schema)
+    
+    index_params = client.prepare_index_params()
+    index_params.add_index(
+        field_name="caption_embedding",
+        index_type="AUTOINDEX",          
+        metric_type="IP",
+    )   
+
+    if has_sparse:
         index_params.add_index(
-            field_name='caption_embedding',
-            index_type='IVF_FLAT',
-            metric_type='IP',
-            params={"nlist": 1024}
+            field_name="caption_sparse",
+            index_type="SPARSE_INVERTED_INDEX",
+            metric_type="BM25",
+            params={
+                "inverted_index_algo": "DAAT_MAXSCORE",  # or "DAAT_WAND"
+                "bm25_k1": 1.2,
+                "bm25_b": 0.75,
+            },
         )
-
- 
-        if has_sparse:
-            index_params.add_index(
-                field_name='caption_sparse',
-                index_type='SPARSE_INVERTED_INDEX',
-                metric_type='BM25',
-                params={"inverted_index_algo": "DAAT_MAXSCORE"}
-            )
-            await client.create_index(
-                collection_name=name,
-                index_params=index_params
-            )
+    await client.create_index(collection_name=name, index_params=index_params)
     await client.load_collection(collection_name=name)
+    
 
 def iter_caption_json(root:Path) -> Iterator[tuple[int,str]]:
     for i, p in enumerate(sorted(root.glob("*.json"))):

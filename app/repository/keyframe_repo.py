@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 
 from pymongo import ReplaceOne
-from pymongo.results import BulkWriteResult, InsertManyResult, DeleteResult
+from pymongo.results import InsertManyResult
 
 
 from app.models.common import KeyframeModel

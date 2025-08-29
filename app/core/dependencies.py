@@ -10,7 +10,7 @@ from app.repository.elastic_repo import ElasticsearchKeyframeRepo
 from app.repository.vector_repo import KeyframeSearchRepo, CaptionSearchRepo
 from app.services.search_services import SearchService
 from app.services.model_services import ModelService
-from app.services.sparse_encoder import MilvusSparseEncoder
+# from app.services.sparse_encoder import MilvusSparseEncoder
 from app.services.tag_services import TagService
 from app.controller.search_controller import SearchController
 
@@ -59,12 +59,12 @@ async def build_app_state() -> AppState:
         keyframe_search=state.kf_search, caption_search=state.cap_search
     )
 
-    sparse_encoder: MilvusSparseEncoder | None = None   
-    if settings.bm25_model_path:
-        sparse_encoder = MilvusSparseEncoder(
-            language=settings.bm25_language,
-            model_state_path=settings.bm25_model_path,
-        )
+    # sparse_encoder: MilvusSparseEncoder | None = None   
+    # if settings.bm25_model_path:
+    #     sparse_encoder = MilvusSparseEncoder(
+    #         language=settings.bm25_language,
+    #         model_state_path=settings.bm25_model_path,
+    #     )
 
     tags = []
     if settings.tags_path:
@@ -77,7 +77,7 @@ async def build_app_state() -> AppState:
         beit3_ckpt=settings.beit3_ckpt,
         beit3_tokenizer_path=settings.beit3_tokenizer_path,
         text_model_name=settings.st_model,
-        sparse_encoder=sparse_encoder,
+        # sparse_encoder=sparse_encoder,
     )
 
     state.controller = SearchController(

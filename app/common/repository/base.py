@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Optional, Sequence, Iterable, cast, Literal
+from typing import List, Optional, Sequence, Iterable, cast, Literal, Union
 from abc import abstractmethod
 from pymilvus import AsyncMilvusClient, AnnSearchRequest, RRFRanker, WeightedRanker
 from scipy.sparse import csr_matrix
@@ -52,11 +52,11 @@ class MilvusVectorSearch:
         top_k: int,
         param: dict,
         expr: Optional[str] = None,
-        with_embedding: bool = False,
+        with_embedding: bool = True,
     ):
-        ofs = ["id"]
+        ofs = ["identification"]
         if with_embedding:
-            ofs.append("embedding")
+            ofs.append(self.dense_field)
 
         res = await self.client.search(
             collection_name=self.collection,
@@ -72,7 +72,7 @@ class MilvusVectorSearch:
     def construct_request_for(
         self,
         *,
-        data: list[float] | csr_matrix,                 
+        data: list[float] | csr_matrix | str,                 
         anns_field: str,      
         top_k: int,
         param: dict,

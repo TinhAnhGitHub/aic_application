@@ -1,0 +1,24 @@
+[project]
+name = "aic-application"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "beanie>=2.0.0",
+    "elasticsearch>=9.1.0",
+    "fastapi>=0.116.1",
+    "ipykernel>=6.30.1",
+    "motor>=3.7.1",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+    "pymilvus>=2.6.0",
+    "sentence-transformers>=5.1.0",
+    "timm>=1.0.19",
+    "torch==2.6.0",
+    "torchaudio==2.6.0",
+    "torchvision==0.21.0",
+    "typer>=0.16.1",
+    "underthesea>=6.8.4",
+    "uvicorn>=0.35.0",
+]
