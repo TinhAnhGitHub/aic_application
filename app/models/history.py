@@ -21,7 +21,6 @@ class SearchHistory(Document):
     timestamp: Indexed(datetime) = Field(default_factory=datetime.now)
     question_filename: str 
     kind: HistoryType
-    created_at: datetime 
 
     # Input
     single_request : SingleSearchRequest | None = None

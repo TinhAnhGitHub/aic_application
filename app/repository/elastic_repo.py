@@ -127,11 +127,11 @@ class ElasticsearchKeyframeRepo:
             body['ocr'] = item.ocr
         await self.es.index(index=self.index, id=_id, document=body)
 
-    async def bulk_upsert(self, docs: AsyncIterable[KeyframeInstance], refresh: bool = True):
+    async def bulk_upsert(self, docs: list[KeyframeInstance], refresh: bool = True):
         from elasticsearch.helpers import  async_streaming_bulk
 
         async def gen_actions():
-            async for d in _aiter(docs):
+            for d in docs:
                 body = d.model_dump()
                 if d.ocr:
                     body["_ocr_joined"] = " ".join(d.ocr)

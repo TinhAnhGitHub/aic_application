@@ -1,6 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import os
+import sys
+ROOT_DIR = os.path.abspath(os.path.join(__name__, '..', '..'))
+sys.path.insert(0, ROOT_DIR)
+print(ROOT_DIR)
 
 from app.core.dependencies import lifespan
 from app.api.health import router as health_router

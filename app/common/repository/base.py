@@ -58,14 +58,23 @@ class MilvusVectorSearch:
         if with_embedding:
             ofs.append(self.dense_field)
 
+        metric_type = None
+        params_inner = None
+        if isinstance(param, dict):
+            metric_type = param.get("metric_type")
+            params_inner = param.get("params")
+        print(f"{metric_type=}")
+        print(f"{params_inner=}")
+        print(f"{type(query_embedding)=}")
         res = await self.client.search(
             collection_name=self.collection,
             data=[query_embedding],
             anns_field=self.dense_field,
-            param=param,
             limit=top_k,
-            expr=expr,
             output_fields=ofs,
+            **({"metric_type": metric_type} if metric_type is not None else {}),
+            **({"params": params_inner} if params_inner is not None else {}),
+
         )
         return self._to_items(res)
 

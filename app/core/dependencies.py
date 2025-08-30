@@ -13,6 +13,19 @@ from app.services.model_services import ModelService
 # from app.services.sparse_encoder import MilvusSparseEncoder
 from app.services.tag_services import TagService
 from app.controller.search_controller import SearchController
+from app.repository.chat_repo import ChatRepo
+from motor.motor_asyncio import AsyncIOMotorClient
+from app.models.history import SearchHistory
+
+from beanie import init_beanie
+async def init_mongo2(db_uri: str, db_name: str):
+    """
+    Call this once at startup.
+    """
+    client = AsyncIOMotorClient(db_uri)
+    db = client[db_name]
+    await init_beanie(database=db, document_models=[SearchHistory])
+    return client
 
 
 class AppState:
@@ -25,6 +38,7 @@ class AppState:
     model_service: ModelService
     tag_service: TagService
     controller: SearchController
+    chat_repo: ChatRepo
 
 async def build_app_state() -> AppState:
     state = AppState()
@@ -87,6 +101,8 @@ async def build_app_state() -> AppState:
         tag_service=state.tag_service,
         model_service=state.model_service,
     )
+    await init_mongo2(settings.mongo_uri, settings.mongo_db)
+    state.chat_repo = ChatRepo()
 
 
     return state
@@ -94,6 +110,9 @@ async def build_app_state() -> AppState:
 def get_controller(request: Request) -> SearchController:
     return request.app.state.controller
 
+
+def get_chat_repo(request: Request) -> ChatRepo:
+    return request.app.state.chat_repo
 
 
 @asynccontextmanager
@@ -109,6 +128,7 @@ async def lifespan(app: FastAPI):
     app.state.model_service = state.model_service
     app.state.tag_service = state.tag_service
     app.state.controller = state.controller
+    app.state.chat_repo = state.chat_repo
 
 
     yield 

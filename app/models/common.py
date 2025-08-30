@@ -5,7 +5,7 @@ from typing import Literal
 
 from app.schemas.search_results import KeyframeScore
 from app.schemas.search_queries import SingleSearchRequest, KeyframeQuery, CaptionQuery, OCRQuery
-
+from pymongo import IndexModel
 
 class KeyframeModel(Document):
     identification: int = Field(..., description="A unique identifier for the keyframe.")
@@ -21,7 +21,7 @@ class KeyframeModel(Document):
             "group_id",
             "video_id",
             "keyframe_id",
-            {"fields": ["identification"], "unique": True},
+            IndexModel([("identification", 1)], unique=True),
         ]
 
 

@@ -71,7 +71,7 @@ class TagService:
     def scan_tags(
         self,
         user_query: str,
-        top_tags: int = 6
+        top_tags: int = 20
     ) -> list[TagInstance]:
         """
         From the user query, scan each tag against the query, and return the top 6 tags

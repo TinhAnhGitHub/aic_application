@@ -92,7 +92,7 @@ async def _ensure_keyframe_collection(client: AsyncMilvusClient, dim: int):
     if not exists:
         fields = [
             FieldSchema(
-                name="id",
+                name="identification",
                 dtype=DataType.INT64,
                 is_primary=True,
                 auto_id=False,
@@ -171,8 +171,8 @@ async def _ensure_caption_collection(
     has_sparse: bool = True,
 ):
     schema = client.create_schema(auto_id=False, enable_dynamic_field=False, description="Caption dense/sparse vectors")
-    schema.add_field("id", DataType.INT64, is_primary=True)
-    schema.add_field("caption_text", DataType.VARCHAR, max_length=32768, enable_analyzer=True)
+    schema.add_field("identification", DataType.INT64, is_primary=True)
+    schema.add_field("caption_text", DataType.VARCHAR, max_length=65535 , enable_analyzer=True)
     schema.add_field("caption_embedding", DataType.FLOAT_VECTOR, dim=dense_dim)
     if has_sparse:
         schema.add_field("caption_sparse", DataType.SPARSE_FLOAT_VECTOR)

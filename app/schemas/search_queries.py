@@ -25,6 +25,7 @@ class OCRQuery(BaseModalityQuery):
 
 
 class SingleSearchRequest(BaseModel):
+    question_filename: str = Field(..., description="Logical name used to group related searches")
     keyframe: Optional[KeyframeQuery] = None
     caption: Optional[CaptionQuery] = None
     ocr: Optional[OCRQuery] = None

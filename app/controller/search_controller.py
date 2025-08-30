@@ -76,11 +76,12 @@ class SearchController:
 
     async def _search_keyframe(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
         assert self.model_service is not None and self.tag_service is not None
-        emb = self.model_service.embed_text(text)
+        emb = self.model_service.embed_queries(text)
         milvus = await self.search_service.search_keyframe_dense(emb, topk, param)
         scored = await self._milvus_to_keyframe_score(milvus)
         if tag_boost_alpha > 0.0:
             tags = self.tag_service.scan_tags(text)
+            print(tags)
             scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
         return scored
 
@@ -149,7 +150,7 @@ class SearchController:
             per_modality.append(ModalityResult(modality="keyframe", items=kf))
             lists_in_order.append(kf)
         
-        fusion_method = 'rrf'
+        fusion_method = ctrl.fusion_method
         if req.caption:
             cap = await self._search_caption(
                 text=req.caption.text,
@@ -161,7 +162,6 @@ class SearchController:
             )
             lists_in_order.append(cap)
             per_modality.append(ModalityResult(modality="caption", items=cap))
-            fusion_method = req.caption.fusion
         
         if req.ocr:
             ocr = await self._search_ocr(req.ocr.text, topk.topk_ocr)
@@ -171,6 +171,11 @@ class SearchController:
         if not any(lists_in_order):
             return SingleSearchResponse(fused=[], per_modality=[], fusion=FusionSummary(method="rrf", detail=RRFDetail(k=60)), meta={})
 
+        
+        if len(lists_in_order) == 1:
+            return SingleSearchResponse(
+                fused=lists_in_order[0][:topk.final_topk], per_modality=per_modality, fusion=None, meta={}
+            )
         if fusion_method == "weighted":
             wv, wc, wo = ctrl.fusion.ensure_scale()
             used_weights: List[float] = []

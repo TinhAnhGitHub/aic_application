@@ -1,6 +1,6 @@
 from app.services.unilm.beit3 import modeling_finetune
 from torchvision import transforms
-# from transformers import XLMRobertaTokenizer
+from transformers import XLMRobertaTokenizer
 from timm import create_model
 from timm.data.constants import IMAGENET_INCEPTION_MEAN, IMAGENET_INCEPTION_STD
 from sentence_transformers import SentenceTransformer
@@ -69,7 +69,7 @@ class ModelService:
         self.device = DEVICE
         # self.sparse_encoder = sparse_encoder
         self._init_text(text_model_name)
-        # self._init_vision(beit3_ckpt, beit3_tokenizer_path)
+        self._init_vision(beit3_ckpt, beit3_tokenizer_path)
 
     def _init_text(self, model_name: str):
         model = SentenceTransformer(model_name, device=self.device)
@@ -77,14 +77,14 @@ class ModelService:
         model.eval()
         self.text_model = model
 
-    # def _init_vision(self, ckpt_path: str, tokenizer_path: str):
-    #     self.vision_model = create_model("beit3_large_patch16_384_retrieval")
-    #     ckpt = torch.load(ckpt_path, map_location="cpu")
-    #     self.vision_model.load_state_dict(ckpt["model"], strict=True)
-    #     self.vision_model.to(self.device, dtype=TORCH_DTYPE).eval()
+    def _init_vision(self, ckpt_path: str, tokenizer_path: str):
+        self.vision_model = create_model("beit3_large_patch16_384_retrieval")
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        self.vision_model.load_state_dict(ckpt["model"], strict=True)
+        self.vision_model.to(self.device, dtype=TORCH_DTYPE).eval()
 
-    #     self.tokenizer = XLMRobertaTokenizer(tokenizer_path)
-    #     self.processor = Processor(self.tokenizer)
+        self.tokenizer = XLMRobertaTokenizer(tokenizer_path)
+        self.processor = Processor(self.tokenizer)
     
     @torch.inference_mode()
     def embed_text(self, text: str) -> list[float]:
@@ -96,8 +96,17 @@ class ModelService:
             device=self.device,
         )
         embs = torch.nn.functional.normalize(embs, p=2, dim=-1)
-        return [embs[0].detach().cpu().numpy().astype(np.float32).tolist()]
-    
+        result = embs[0].detach().cpu().numpy().astype(np.float32).tolist()
+        return result
+
+    @torch.inference_mode()
+    def embed_queries(self, text: str) -> list[float]:
+        inputs = self.processor.process(image=None, text=text)
+        with torch.no_grad():
+            _, text_feature = self.vision_model(text_description=inputs['text_description'].to(self.device), padding_mask=inputs['padding_mask'].to(self.device), only_infer=True)
+        text_feature /= text_feature.norm(dim=-1, keepdim=True)
+        return text_feature[0].detach().cpu().numpy().astype(np.float32).tolist()
+        
 
     def embed_sparse_text(self, text: str) -> str:
         # if not self.sparse_encoder:

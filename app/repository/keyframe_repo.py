@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from typing import Iterable, List, Optional, Sequence, Union
+from typing import Iterable, List, Optional, Sequence, Union, Any
 
 from beanie import init_beanie, PydanticObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
-
+from tqdm import tqdm
 from pymongo import ReplaceOne
 from pymongo.results import InsertManyResult
 
-
+from beanie.operators import In 
 from app.models.common import KeyframeModel
+
+
+
+def _chunks(seq: Sequence[Any], size: int):
+    for i in range(0, len(seq), size):
+        yield seq[i:i+size]
 
 
 async def init_mongo(db_uri: str, db_name: str):
@@ -36,11 +42,15 @@ class KeyframeRepo:
 
     async def create_many(
         self, items: Sequence[Union[KeyframeModel, dict]], ordered: bool = False
-    ) -> InsertManyResult:
+    ):
         docs: List[KeyframeModel] = [
             i if isinstance(i, KeyframeModel) else self.model(**i) for i in items
         ]
-        return await self.model.insert_many(docs, ordered=ordered)
+        size = 2000
+        for i in tqdm(range(0, len(docs), size)):
+            batch = docs[i:i+size]
+            batch_ids = await self.model.insert_many(batch, ordered=ordered)
+        
 
     
     
@@ -59,7 +69,7 @@ class KeyframeRepo:
         id_list = list(identifications)
 
         docs = await self.model.find(
-            self.model.identification.in_(id_list) # type: ignore[attr-defined]
+            In(self.model.identification, id_list)
         ).to_list()
 
         lookup = {

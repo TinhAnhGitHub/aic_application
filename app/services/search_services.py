@@ -11,7 +11,7 @@ class SearchService:
 
     
     async def search_keyframe_dense(self, query_embedding: list[float], top_k: int, param: dict, **kwargs):
-        return await self.keyframe_search.search_dense(query_embedding, top_k, param, **kwargs)
+            return await self.keyframe_search.search_dense(query_embedding, top_k, param, **kwargs)
     
     async def search_caption_dense(self, query_embedding: list[float], top_k: int, param: dict, **kwargs):
         return await self.caption_search.search_caption_dense(query_embedding, top_k, param, **kwargs)

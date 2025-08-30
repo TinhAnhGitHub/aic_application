@@ -16,17 +16,14 @@ class Settings(BaseSettings):
     milvus_collection_keyframe: str = "keyframes"
     milvus_collection_caption: str = "caption"
 
-    sparse_vocab_path: str | None = None
-    sparse_idf_path: str | None = None
 
-    tags_path: str | None = None    
+    tags_path: str | None = "/media/tinhanhnguyen/Projects/aic_application/data/tags.txt"   
 
     st_model: str = "AITeamVN/Vietnamese_Embedding"
-    beit3_ckpt: str = "checkpoints/beit3.pth"
-    beit3_tokenizer_path: str = "xlm-roberta-base"
+    beit3_ckpt: str = "/media/tinhanhnguyen/Projects/HCMAI/local/beit3/beit3_large_patch16_384_f30k_retrieval.pth"
+    beit3_tokenizer_path: str = "/media/tinhanhnguyen/Projects/HCMAI/local/beit3/beit3.spm"
 
-    bm25_language: str = "icu"
-    bm25_model_path: str | None = "bm25.json"   
+    
 
     model_config = SettingsConfigDict(
         env_file=".env",

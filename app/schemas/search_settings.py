@@ -23,7 +23,7 @@ class FusionWeights(BaseModel):
 
 
 
-
+from typing import Literal
 
 class TopKReturn(BaseModel):
     topk_visual: int = Field(default=200)
@@ -33,10 +33,11 @@ class TopKReturn(BaseModel):
 
 
 class ControllerParams(BaseModel):
+    fusion_method: Literal['rrf', 'weighted'] = Field(default='rrf')
     fusion: FusionWeights = Field(default_factory=FusionWeights)
     topk_settings: TopKReturn = Field(default_factory=TopKReturn)
     kf_search_param: dict = Field(default_factory=lambda: {"metric_type": "IP", "params": {"nprobe": 16}})
-    cap_search_param: dict = Field(default_factory=lambda: {"metric_type": "IP", "params": {"nprobe": 16}})
+    cap_search_param: dict = Field(default_factory=lambda: {"metric_type": "IP"})
 
     
 

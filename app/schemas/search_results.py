@@ -41,7 +41,7 @@ class FusionSummary(BaseModel):
 class SingleSearchResponse(BaseModel):
     fused: list[KeyframeScore]
     per_modality: list[ModalityResult]
-    fusion: FusionSummary
+    fusion: FusionSummary | None
     meta: dict = Field(default_factory=dict)
 
 class TrakePath(BaseModel):
