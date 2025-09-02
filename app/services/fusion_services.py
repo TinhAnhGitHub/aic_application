@@ -1,6 +1,6 @@
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from statistics import pstdev, mean
-
+import math
 from app.schemas.search_results import KeyframeScore
 
 def rrf_fuse(
@@ -39,25 +39,26 @@ def weighted_fuse(
 ) -> list[KeyframeScore]:
     
     assert len(per_lists) == len(weights), "weights length must match number of lists"
-    z_maps: List[Dict[int, float]] = []
     rep: Dict[int, KeyframeScore] = {}
+    z_maps: List[Dict[int, float]] = []
 
     for items in per_lists:
         for it in items:
             rep.setdefault(it.identification, it)
-    
+
     for items in per_lists:
         if not items:
             z_maps.append({})
             continue
         scores = [it.score for it in items]
         mu = mean(scores)
-        sd_raw = pstdev(scores) if len(scores) > 1 else 0.0
-        sd = sd_raw if sd_raw > 1e-6 else 1.0
-        z_maps.append({it.identification: (it.score - mu) / sd for it in items})
-    
+        sd = pstdev(scores) if len(scores) > 1 else 0.0
+        sd = sd if sd > 1e-6 else 1.0
+        normed = [(s - mu) / sd for s in scores]
+        z_maps.append({it.identification: n for it, n in zip(items, normed)})
+
     all_ids = set().union(*(set(m) for m in z_maps)) if z_maps else set()
-    out: List[KeyframeScore] = []
+    out: list[KeyframeScore] = []
     for ident in all_ids:
         s = 0.0
         for w, m in zip(weights, z_maps):
@@ -73,7 +74,8 @@ def weighted_fuse(
 
 
 def _kf_pos(h: KeyframeScore)->int:
-    return int(h.keyframe_id)
+    id_kf = h.keyframe_id.split('_')[1]
+    return int(id_kf)
 
 
 def _dedup_hits_kf(
@@ -174,45 +176,67 @@ def normalize_event_scores_kf(
 
 def beam_sequences_single_bucket_kf(
     event_lists: List[List[KeyframeScore]],   # one bucket: [E0 list, E1 list, ...], all non-empty
+    bucket: tuple[str,str],
+    fps_map: dict[str, float],
     K: Optional[int] = 5,
     beam_size: int = 50,
-    trans_sigma: float = 1.5 * 6,
-    trans_weight: float = 0.6,
+    mu_s: float = 0.0,
+    sigma_s: float = 3.0,
+    W: float = 0.08,
+    gap_cap_s: float = 10.0
+
 ) -> List[Tuple[List[KeyframeScore], float]]:
     """
     Beam search over ordered events for a single (group_id, video_id) bucket.
     Enforces strictly increasing keyframe_id and adds Gaussian temporal prior.
     """
     import heapq
+    def kf_pos(h: KeyframeScore) -> int:
+        return int(h.keyframe_id.split('_')[1])
 
-    def temporal_prior(prev: KeyframeScore, curr: KeyframeScore) -> float:
-        gap = _kf_pos(curr) - _kf_pos(prev)
-        return - (gap * gap) / (2 * trans_sigma * trans_sigma) * trans_weight
+    
+    key_fps = f"{bucket[0]}_{bucket[1]}.mp4"
+    fps = fps_map[key_fps]
+    def temporal_bonus_seconds(prev: KeyframeScore, curr: KeyframeScore) -> float:
+        gap_frames = kf_pos(curr) - kf_pos(prev)
+        gap_s = gap_frames / fps
+        return float(W * math.exp(- ((gap_s - mu_s) ** 2) / (2.0 * sigma_s * sigma_s)))
+    
+
 
     first = event_lists[0]
-    beam: List[Tuple[float, List[KeyframeScore]]] = [(-h.score, [h]) for h in first]
-    heapq.heapify(beam)
+    seq = 0
+    def _push(heap, neg_score: float, path: List[KeyframeScore]):
+        nonlocal seq
+        heapq.heappush(heap, (neg_score, seq, path))
+        seq += 1
+    
+
+    beam: List[Tuple[float, int, List[KeyframeScore]]] = []
+    for h in first:
+        _push(beam, -h.score, [h])
     beam = heapq.nsmallest(beam_size, beam)
 
+
     for idx in range(1, len(event_lists)):
-        nxt: List[Tuple[float, List[KeyframeScore]]] = []
-        for neg, path in beam:
-            prev = path[-1]
+        nxt: List[Tuple[float, int, List[KeyframeScore]]] = []
+        for neg, _, paths in beam:
+            prev = paths[-1]
             base = -neg
             for cur in event_lists[idx]:
                 if _kf_pos(cur) <= _kf_pos(prev):
                     continue
-                new_score = base + cur.score + temporal_prior(prev, cur)
-                heapq.heappush(nxt, (-new_score, path + [cur]))
+                new_score = base + cur.score + temporal_bonus_seconds(prev, cur)
+                _push(nxt, -new_score, paths + [cur])
         if not nxt:
             return []
         beam = heapq.nsmallest(beam_size, nxt)
 
     if K is None:
-        return [(path, -neg) for (neg, path) in beam]
+        return [(path, -neg) for (neg,_,path) in beam]
     topK = min(K, len(beam))
     best = heapq.nsmallest(topK, beam)
-    return [(path, -neg) for (neg, path) in best]
+    return [(path, -neg) for (neg, _,path) in best]
 
 
 

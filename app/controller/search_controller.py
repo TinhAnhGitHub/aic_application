@@ -31,7 +31,26 @@ from app.services.search_services import SearchService
 from app.schemas.search_settings import TopKReturn, ControllerParams
 from app.services.model_services import ModelService
 
+import json
+from app.core.logger import RichAsyncLogger
 
+logger = RichAsyncLogger(__name__)
+
+
+def normalize_paths(
+    paths: List[Tuple[List[KeyframeScore], float]]
+) -> List[Tuple[List[KeyframeScore], float]]:
+    if not paths:
+        return []
+    scores = [score for _, score in paths]
+    print(f"{scores=}")
+    
+    lo, hi = min(scores), max(scores)
+  
+    if abs(hi - lo) < 1e-6:
+        return [(p, 1.0) for p, _ in paths]
+    rng = hi - lo
+    return [(p, (s - lo) / rng) for p, s in paths]
 
 class SearchController:
     def __init__(
@@ -48,7 +67,7 @@ class SearchController:
         self.search_service = search_service
         self.tag_service = tag_service
         self.model_service = model_service
-
+        self.vid2fps = json.load(open('/media/tinhanhnguyen/Projects/aic_application/data/vid2fps.json'))
     
     async def _milvus_to_keyframe_score(
         self,
@@ -56,6 +75,7 @@ class SearchController:
     ) -> list[KeyframeScore]:
         identifications = [int(r.identification) for r in result]
         keyframes = await self.keyframe_repo.get_many_by_identifications(identifications)
+        logger.info(f"Keyframes returned: {len(keyframes)=}")
         id_to_kf = {kf.identification: kf for kf in keyframes}
         scores = []
         for r in result:
@@ -67,17 +87,21 @@ class SearchController:
                         group_id=kf.group_id,
                         video_id=kf.video_id,
                         keyframe_id=kf.keyframe_id,
-                        tags=kf.tags,
-                        ocr=kf.ocr,
                         score=r.score
                     )
                 )
         return scores    
 
     async def _search_keyframe(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
-        assert self.model_service is not None and self.tag_service is not None
+
+        logger.info(f"{text=}")
+        logger.info(f"{topk=}")
+        logger.info(f"{param=}")
+
+
         emb = self.model_service.embed_queries(text)
         milvus = await self.search_service.search_keyframe_dense(emb, topk, param)
+        print(f'Milvus kf return: {len(milvus)=}')
         scored = await self._milvus_to_keyframe_score(milvus)
         if tag_boost_alpha > 0.0:
             tags = self.tag_service.scan_tags(text)
@@ -87,15 +111,6 @@ class SearchController:
 
     
 
-    # async def _search_caption_dense(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
-    #     assert self.model_service is not None and self.tag_service is not None
-    #     emb = self.model_service.embed_text(text)
-    #     milvus = await self.search_service.search_caption_dense(emb, topk, param)
-    #     scored = await self._milvus_to_keyframe_score(milvus)
-    #     if tag_boost_alpha > 0.0:
-    #         tags = self.tag_service.scan_tags(text)
-    #         scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
-    #     return scored
 
     async def _search_caption(
         self,
@@ -107,8 +122,9 @@ class SearchController:
         weighted: float | None 
     ):
         dense_emb = self.model_service.embed_text(text)
-        dense_req = self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
 
+        logger.info(f"{topk=}")
+        dense_req = self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
         sparse_req = self.search_service.caption_search.construct_sparse_request(text, topk, {"metric_type": "BM25"})
         
         if fusion=='weighted':
@@ -118,7 +134,7 @@ class SearchController:
                 dense_req=dense_req,
                 sparse_req=sparse_req,
                 rerank='weighted',
-                weights=[w_dense, w_sparse]
+                weights=[w_dense, w_sparse] 
             )
         else:
             milvus_hits = await self.search_service.caption_search.search_caption_hybrid(
@@ -128,12 +144,14 @@ class SearchController:
             )
 
         scored = await self._milvus_to_keyframe_score(milvus_hits)
+        
         if tag_boost_alpha > 0.0:
             tags = self.tag_service.scan_tags(text)
             scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
         return scored
 
     async def _search_ocr(self, text: str, topk: int) -> List[KeyframeScore]:
+        print(topk)
         assert self.ocr_repo is not None, "ocr_repo not set"
         return await self.ocr_repo.search(query_text=text, top_k=topk)
 
@@ -142,31 +160,37 @@ class SearchController:
 
 
     async def single_search(self, req: SingleSearchRequest, topk: TopKReturn, ctrl: ControllerParams) -> SingleSearchResponse:
+
         per_modality: list[ModalityResult] = []
         lists_in_order: List[List[KeyframeScore]] = []
 
         if req.keyframe:
-            kf = await self._search_keyframe(req.keyframe.text, topk.topk_visual, ctrl.kf_search_param, req.keyframe.tag_boost_alpha)
-            per_modality.append(ModalityResult(modality="keyframe", items=kf))
-            lists_in_order.append(kf)
+            if req.keyframe.text != '':
+                kf = await self._search_keyframe(req.keyframe.text, topk.topk_visual, ctrl.kf_search_param, req.keyframe.tag_boost_alpha)
+
+                logger.info(f"{len(kf)=}")
+                per_modality.append(ModalityResult(modality="keyframe", items=kf))
+                lists_in_order.append(kf)
         
         fusion_method = ctrl.fusion_method
         if req.caption:
-            cap = await self._search_caption(
-                text=req.caption.text,
-                topk=topk.topk_caption,
-                param=ctrl.cap_search_param,
-                tag_boost_alpha=req.caption.tag_boost_alpha,
-                fusion=req.caption.fusion,
-                weighted=req.caption.weighted
-            )
-            lists_in_order.append(cap)
-            per_modality.append(ModalityResult(modality="caption", items=cap))
+            if req.caption.text != '':
+                cap = await self._search_caption(
+                    text=req.caption.text,
+                    topk=topk.topk_caption,
+                    param=ctrl.cap_search_param,
+                    tag_boost_alpha=req.caption.tag_boost_alpha,
+                    fusion=req.caption.fusion,
+                    weighted=req.caption.weighted
+                )
+                lists_in_order.append(cap)
+                per_modality.append(ModalityResult(modality="caption", items=cap))
         
         if req.ocr:
-            ocr = await self._search_ocr(req.ocr.text, topk.topk_ocr)
-            per_modality.append(ModalityResult(modality="ocr", items=ocr))
-            lists_in_order.append(ocr)
+            if req.ocr.text != '':
+                ocr = await self._search_ocr(req.ocr.text, topk.topk_ocr)
+                per_modality.append(ModalityResult(modality="ocr", items=ocr))
+                lists_in_order.append(ocr)
 
         if not any(lists_in_order):
             return SingleSearchResponse(fused=[], per_modality=[], fusion=FusionSummary(method="rrf", detail=RRFDetail(k=60)), meta={})
@@ -187,7 +211,16 @@ class SearchController:
             fused = rrf_fuse(lists_in_order, k=60)
             fusion_summary = FusionSummary(method="rrf", detail=RRFDetail(k=60))
 
+
+        fused_scores = [item.score for item in fused]
+        lo,hi = min(fused_scores), max(fused_scores)
+        rng = hi - lo if (hi - lo) > 1e-6 else 1.0
+        for item in fused:
+            item.score = (item.score-lo)/rng
         fused = fused[:topk.final_topk]
+
+
+
         return SingleSearchResponse(fused=fused, per_modality=per_modality, fusion=fusion_summary, meta={})
     
 
@@ -196,14 +229,10 @@ class SearchController:
         self,
         req: TrakeSearchRequest,
         *,
-        topk: TopKReturn,
-        ctrl: ControllerParams,
         window: int = 6,
         beam_size: int = 50,
-        per_bucket_top_k: Optional[int] = None,
+        per_bucket_top_k: Optional[int] = 10,
         global_top_k: Optional[int] = 20,
-        norm_method: str = "zscore",
-        norm_temperature: float = 1.0,
         per_event_cap: Optional[int] = None
     ) -> tuple[TrakePathResponse, list[list[KeyframeScore]]]:
         """
@@ -219,31 +248,46 @@ class SearchController:
             - The list[list[keyframe_score]] with raw score
         """
 
+
+        logger.info(f"{req=}")
         events_sorted = sorted(req.events, key=lambda e: e.event_order)
         raw_hits_per_event: list[list[KeyframeScore]] = []
 
         for ev in events_sorted:
-            single = await self.single_search(ev.query, topk, ctrl)
+            logger.info("Search")
+            single = await self.single_search(ev.query.req, ev.query.ctrl.topk_settings, ev.query.ctrl)
+            logger.info(f"{len(single.fused)=}")
             fused_list: List[KeyframeScore] = single.fused
             if per_event_cap is not None and per_event_cap > 0:
                 fused_list = fused_list[:per_event_cap]
 
             raw_hits_per_event.append(fused_list)
         
+
         by_group_video = organize_and_dedup_group_video_kf(raw_hits_per_event, window=window)
+
+        logger.info(f"{by_group_video=}")
+
 
         by_bucket_paths: Dict[Tuple[str, str], List[Tuple[List[KeyframeScore], float]]] = {}
         for bucket, event_lists in by_group_video.items():
-            norm_lists = normalize_event_scores_kf(
-                event_lists,
-                method=norm_method,
-                temperature=norm_temperature,
-            )
+            # norm_lists = normalize_event_scores_kf(
+            #     event_lists,
+            #     method=norm_method,
+            #     temperature=norm_temperature,
+            # )
             paths = beam_sequences_single_bucket_kf(
-                event_lists=norm_lists,
-                beam_size=beam_size,
+                event_lists=event_lists,
                 K=per_bucket_top_k,
+                beam_size=beam_size,
+                bucket=bucket,
+                fps_map=self.vid2fps,
+                mu_s=0.0,
+                sigma_s=3.0,
+                W=0.08,
+                gap_cap_s=10.0
             )
+            print(f"{len(paths)}")
             if paths:
                 by_bucket_paths[bucket] = paths
         

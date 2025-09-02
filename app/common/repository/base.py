@@ -120,6 +120,7 @@ class MilvusVectorSearch:
             reqs=requests,
             output_fields=ofs,            #
             ranker=ranker,
+            limit=200
         )   
         return self._to_items(res)
     

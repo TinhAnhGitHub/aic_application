@@ -24,6 +24,17 @@ class ChatRepo:
     async def get_by_id(self, id_: PydanticObjectId) -> Optional[SearchHistory]:
         return await self.model.get(id_)
 
+    async def get_all(self) -> List[SearchHistory]:
+        return await self.model.find_all().to_list()
+
+    async def get_by_timestamp(
+        self, timestamp: str, limit: int = 50
+    )-> list[SearchHistory]:
+        return (
+            await self.model.find(self.model.timestamp == timestamp)
+                .limit(1)
+                .to_list()
+        )[0]
     async def get_by_question(
         self, question_filename: str, limit: int = 50
     ) -> List[SearchHistory]:

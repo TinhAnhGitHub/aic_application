@@ -5,7 +5,7 @@ from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
 from rapidfuzz import fuzz 
 from underthesea import word_tokenize
-
+import numpy as np
 from app.schemas.tags import TagInstance
 from app.schemas.search_results import KeyframeScore
 from app.core.logger import RichAsyncLogger
@@ -51,21 +51,7 @@ class TagService:
             10, 
             min(preselect_k, len(tag_list))
         )
-        logger.info(
-            "TagService initialized",
-            extra={
-                "tags_count": len(self.tag_list),
-                "preselect_k": self._preselect_k,
-                "weights": {
-                    "bm25": self.bm25_weight,
-                    "tfidf": self.tfidf_weight,
-                    "rf": self.rf_weight,
-                },
-                "tfidf_vocab_size": getattr(self._tfidf_word, "vocabulary_", None) and len(self._tfidf_word.vocabulary_),
-                "tokenizer": "vn_tokenizer",
-                "ngram_range": (1, 2),
-            },
-        )
+     
 
         
     def scan_tags(
@@ -134,6 +120,7 @@ class TagService:
         self,
         tags: list[TagInstance],
         results_search: list[KeyframeScore],
+        gamma: float = 0.6,
         alpha: float = 0.2
     ) -> list[KeyframeScore]:
         """Rerank the keyframe search results with the tags
@@ -146,41 +133,37 @@ class TagService:
         if not results_search:
             return []
 
-        top_tag_names = {t.tag_name for t in tags}
+        vals = np.array([kf.score for kf in results_search], dtype=float)
+        if vals.size == 0:
+            return results_search
 
-        clip_scores = np.array([
-            kf.score for kf in results_search
-        ], dtype=float)
+        
+        lo = float(vals.min())
+        hi = float(vals.max())
+        rng = (hi - lo) if (hi - lo) > 1e-6 else 1.0
+        base01 = (vals - lo) / rng
 
-        mu = clip_scores.mean()
-        sigma = clip_scores.std()
-        if sigma < 1e-6:
-            norm_scores = clip_scores - mu
+        tag_scores = {t.tag_name: float(t.tag_score) for t in tags}
+        denom = sum(tag_scores.values()) or 1.0
+
+        overlap_raw = []
+        for kf in results_search:
+            kf_tags = set(kf['tags'])
+            s = sum(tag_scores.get(t, 0.0) for t in kf_tags) / denom  # ∈ [0,1]
+            overlap_raw.append(s)
+        
+        ov = np.array(overlap_raw, dtype=float) ** float(gamma)  # damp
+        if ov.size:
+            o_lo = float(ov.min())
+            o_hi = float(ov.max())
+            o_rng = (o_hi - o_lo) if (o_hi - o_lo) > 1e-6 else 1.0
+            overlap01 = (ov - o_lo) / o_rng  # ∈ [0,1]
         else:
-            norm_scores = (clip_scores - mu) / sigma
+            overlap01 = ov
 
-        final_scores = []
+        beta = float(max(0.0, min(1.0, alpha)))  # clamp
+        final01 = (1.0 - beta) * base01 + beta * overlap01  # stays in [0,1]
 
-        for i, kf in enumerate(results_search):
-            if hasattr(kf, "tags") and kf.tags:
-                kf_tags = set(kf.tags)
-            else:
-                kf_tags = set()
-        
-
-            m = len(kf_tags & top_tag_names)
-            boost = alpha * np.log1p(m) 
-            final_score = norm_scores[i] + boost
-            final_scores.append(final_score)
-        
-        for kf, fs in zip(results_search, final_scores):
-            kf.score = float(fs)
-        
-        reranked = sorted(
-            results_search,
-            key=lambda x: x.score,
-            reverse=True
-        )
-
-        return reranked
-
+        for kf, s in zip(results_search, final01.tolist()):
+            kf.score = float(s)
+        return sorted(results_search, key=lambda x: x.score, reverse=True)

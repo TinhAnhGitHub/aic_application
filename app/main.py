@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from fastapi.staticfiles import StaticFiles
 import os
 import sys
 ROOT_DIR = os.path.abspath(os.path.join(__name__, '..', '..'))
@@ -12,6 +12,10 @@ from app.api.health import router as health_router
 from app.api.search import router as search_router
 
 app = FastAPI(title="Hotspot Search API", version="0.1.0", lifespan=lifespan)
+
+
+app.mount('/video', StaticFiles(directory='/media/tinhanhnguyen/Projects/HCMAI/data/videos'), name='video')
+app.mount('/keyframe', StaticFiles(directory='/media/tinhanhnguyen/Projects/HCMAI/data/keyframe'), name='keyframe')
 
 
 app.add_middleware(
@@ -43,5 +47,5 @@ if __name__ == "__main__":
         "app.main:app" if reload else app,
         host=host,
         port=port,
-        reload=reload,
+        reload=False,
     )

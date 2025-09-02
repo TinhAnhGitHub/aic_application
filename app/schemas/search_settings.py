@@ -33,7 +33,7 @@ class TopKReturn(BaseModel):
 
 
 class ControllerParams(BaseModel):
-    fusion_method: Literal['rrf', 'weighted'] = Field(default='rrf')
+    fusion_method: Literal['rrf', 'weighted'] = Field(default='weighted')
     fusion: FusionWeights = Field(default_factory=FusionWeights)
     topk_settings: TopKReturn = Field(default_factory=TopKReturn)
     kf_search_param: dict = Field(default_factory=lambda: {"metric_type": "IP", "params": {"nprobe": 16}})

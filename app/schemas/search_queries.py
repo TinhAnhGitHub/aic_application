@@ -1,6 +1,8 @@
 from pydantic import BaseModel, Field
 from typing import Literal, Optional, List, Union
 
+from app.schemas.search_settings import TopKReturn, ControllerParams
+
 SearchModality = Literal['keyframe', 'caption', 'ocr']
 FusionMethod = Literal['rrf', 'weighted']
 
@@ -30,9 +32,17 @@ class SingleSearchRequest(BaseModel):
     caption: Optional[CaptionQuery] = None
     ocr: Optional[OCRQuery] = None
 
+
+
+class SingleSearchPayload(BaseModel):
+    req: SingleSearchRequest
+    ctrl: ControllerParams = ControllerParams()
+
+
+
 class EventQuery(BaseModel):
     event_order: int
-    query: SingleSearchRequest
+    query: SingleSearchPayload
 
 class TrakeSearchRequest(BaseModel):
     events: list[EventQuery]

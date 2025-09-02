@@ -96,7 +96,6 @@ class ElasticsearchKeyframeRepo:
                     "keyframe_id": {"type": "keyword"},
                     "identification": {"type": "integer"},
                     "tags": {"type": "keyword"},
-                    # Store OCR list in _source, but index joined text for analysis
                     "ocr": {
                         "type": "text",
                         "analyzer": "my_vi_custom",
@@ -105,7 +104,7 @@ class ElasticsearchKeyframeRepo:
                             "fold": {"type": "text", "analyzer": "my_vi_fold"},
                         },
                     },
-                    "_ocr_joined": {  # internal convenience (not queried directly here)
+                    "_ocr_joined": {  
                         "type": "text",
                         "index": False,
                     },
@@ -235,13 +234,11 @@ class ElasticsearchKeyframeRepo:
             src = hit.get("_source", {})
             out.append(
                 KeyframeScore(
-                    score=hit.get("_score", 0.0),
+                    score=float(src),
                     group_id=src['group_id'],
                     video_id=src['video_id'],
                     keyframe_id=src['keyframe_id'],
                     identification=src['identification'],
-                    tags=src.get("tags"),
-                    ocr=src.get("ocr")
                 )
             )
         return out

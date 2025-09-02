@@ -26,8 +26,6 @@ class KeyframeScore(BaseModel):
     group_id: str
     video_id: str
     keyframe_id: str
-    tags: Optional[list[str]] = None
-    ocr: Optional[list[str]] = None
     score: float
 
 class ModalityResult(BaseModel):

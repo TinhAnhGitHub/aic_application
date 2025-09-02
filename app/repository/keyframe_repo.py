@@ -13,6 +13,12 @@ from beanie.operators import In
 from app.models.common import KeyframeModel
 
 
+from app.core.logger import RichAsyncLogger
+
+logger = RichAsyncLogger(__name__)
+
+
+
 
 def _chunks(seq: Sequence[Any], size: int):
     for i in range(0, len(seq), size):
@@ -71,6 +77,8 @@ class KeyframeRepo:
         docs = await self.model.find(
             In(self.model.identification, id_list)
         ).to_list()
+
+        
 
         lookup = {
             d.identification:d for d in docs
