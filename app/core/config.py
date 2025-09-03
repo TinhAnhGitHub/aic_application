@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     beit3_ckpt: str = "/media/tinhanhnguyen/Projects/HCMAI/local/beit3/beit3_large_patch16_384_f30k_retrieval.pth"
     beit3_tokenizer_path: str = "/media/tinhanhnguyen/Projects/HCMAI/local/beit3/beit3.spm"
 
+    som_bmu_map_path: str | None = None  # Path to a .npz/.npy or JSON mapping identification->(u,v)
+    som_grid_h: int = 64
+    som_grid_w: int = 64
+    som_kernel_radius: int = 2
+    som_kernel_sigma: float = 1.2
+    som_w_pos: float = 1.0
+    som_w_neg: float = 0.4
+    som_alpha: float = 1.0
+    som_beta: float = 0.75
+    som_gamma: float = 0.15
+    som_kappa: float = 3.0
     
 
     model_config = SettingsConfigDict(

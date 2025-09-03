@@ -12,6 +12,16 @@ class KeyframeInstance(BaseModel):
     ocr: list[str] | None = Field(None, description="List of OCR texts associated with the keyframe")
 
 
+class KeyframeRef(BaseModel):
+    """
+    Minimal reference for UI intermediate results.
+    Only composite key, no tags/OCR/identification.
+    """
+    group_id: str
+    video_id: str
+    keyframe_id: str
+
+
 # class KeyframeScore(KeyframeInstance):
 #     score: float
 
@@ -77,5 +87,4 @@ class KeyframeInstance(BaseModel):
 #     keyframe_id: str
 #     group_id: str
 #     score: float
-
 

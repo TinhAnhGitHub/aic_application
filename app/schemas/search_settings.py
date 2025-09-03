@@ -38,6 +38,8 @@ class ControllerParams(BaseModel):
     topk_settings: TopKReturn = Field(default_factory=TopKReturn)
     kf_search_param: dict = Field(default_factory=lambda: {"metric_type": "IP", "params": {"nprobe": 16}})
     cap_search_param: dict = Field(default_factory=lambda: {"metric_type": "IP"})
+    user_tags: list[str]  = Field(default_factory=list, description="User-selected tags to boost results globally after fusion")
+    tag_boost_alpha: float = Field(default=0.2, ge=0.0, le=1.0, description="Blend weight for user tag bonus in [0,1]")
+    tag_gamma: float = Field(default=0.6, ge=0.0, le=5.0, description="Damping exponent for tag bonus (lower -> gentler boost)")
 
     
-

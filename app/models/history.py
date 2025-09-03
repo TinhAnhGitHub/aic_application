@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.schemas.search_queries import SingleSearchRequest, TrakeSearchRequest
 from app.schemas.search_results import SingleSearchResponse, TrakePathResponse
+from app.schemas.application import KeyframeRef
 
 HistoryType = Literal["single", "trake"]
 
@@ -37,3 +38,18 @@ class SearchHistory(Document):
             [("question_filename", 1), ("created_at", -1)],
         ]
     
+
+class IntermediateResult(Document):
+    """
+    Stores mutable, UI-driven intermediate selections for a question.
+    """
+    question_filename: str
+    items: list[KeyframeRef] = Field(default_factory=list)
+    updated_at: Indexed(datetime) = Field(default_factory=datetime.now)
+
+    class Settings:
+        name = "intermediate_results"
+        indexes = [
+            "question_filename",
+            ("updated_at", -1),
+        ]

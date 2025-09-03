@@ -10,12 +10,12 @@ from app.repository.elastic_repo import ElasticsearchKeyframeRepo
 from app.repository.vector_repo import KeyframeSearchRepo, CaptionSearchRepo
 from app.services.search_services import SearchService
 from app.services.model_services import ModelService
-# from app.services.sparse_encoder import MilvusSparseEncoder
 from app.services.tag_services import TagService
 from app.controller.search_controller import SearchController
 from app.repository.chat_repo import ChatRepo
 from motor.motor_asyncio import AsyncIOMotorClient
-from app.models.history import SearchHistory
+from app.models.history import SearchHistory, IntermediateResult
+from app.models.som import SomFeedbackEvent, SomOverlay
 
 from beanie import init_beanie
 async def init_mongo2(db_uri: str, db_name: str):
@@ -24,7 +24,7 @@ async def init_mongo2(db_uri: str, db_name: str):
     """
     client = AsyncIOMotorClient(db_uri)
     db = client[db_name]
-    await init_beanie(database=db, document_models=[SearchHistory])
+    await init_beanie(database=db, document_models=[SearchHistory, IntermediateResult, SomFeedbackEvent, SomOverlay])
     return client
 
 
@@ -39,6 +39,8 @@ class AppState:
     tag_service: TagService
     controller: SearchController
     chat_repo: ChatRepo
+    intermediate_repo: Any
+    som_service: Any
 
 async def build_app_state() -> AppState:
     state = AppState()
@@ -73,13 +75,6 @@ async def build_app_state() -> AppState:
         keyframe_search=state.kf_search, caption_search=state.cap_search
     )
 
-    # sparse_encoder: MilvusSparseEncoder | None = None   
-    # if settings.bm25_model_path:
-    #     sparse_encoder = MilvusSparseEncoder(
-    #         language=settings.bm25_language,
-    #         model_state_path=settings.bm25_model_path,
-    #     )
-
     tags = []
     if settings.tags_path:
         with open(settings.tags_path, "r", encoding="utf-8") as f:
@@ -91,7 +86,6 @@ async def build_app_state() -> AppState:
         beit3_ckpt=settings.beit3_ckpt,
         beit3_tokenizer_path=settings.beit3_tokenizer_path,
         text_model_name=settings.st_model,
-        # sparse_encoder=sparse_encoder,
     )
 
     state.controller = SearchController(
@@ -100,9 +94,30 @@ async def build_app_state() -> AppState:
         search_service=state.search_service,
         tag_service=state.tag_service,
         model_service=state.model_service,
+        som_service=state.som_service,
     )
     await init_mongo2(settings.mongo_uri, settings.mongo_db)
     state.chat_repo = ChatRepo()
+    from app.repository.intermediate_repo import IntermediateRepo
+    state.intermediate_repo = IntermediateRepo()
+
+    from app.repository.som_repo import SomRepo
+    from app.services.som_service import SomFeedbackService, SomConfig
+    bmu_map = SomFeedbackService.load_bmu_map(settings.som_bmu_map_path)
+    som_cfg = SomConfig(
+        grid_h=settings.som_grid_h,
+        grid_w=settings.som_grid_w,
+        r=settings.som_kernel_radius,
+        sigma=settings.som_kernel_sigma,
+        decay_lambda_per_hour=settings.som_decay_lambda_per_hour,
+        w_pos=settings.som_w_pos,
+        w_neg=settings.som_w_neg,
+        alpha=settings.som_alpha,
+        beta=settings.som_beta,
+        gamma=settings.som_gamma,
+        kappa=settings.som_kappa,
+    )
+    state.som_service = SomFeedbackService(bmu_map=bmu_map, repo=SomRepo(), cfg=som_cfg)
 
 
     return state
@@ -114,10 +129,15 @@ def get_controller(request: Request) -> SearchController:
 def get_chat_repo(request: Request) -> ChatRepo:
     return request.app.state.chat_repo
 
+def get_intermediate_repo(request: Request):
+    return request.app.state.intermediate_repo
+
+def get_som_service(request: Request):
+    return request.app.state.som_service
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     state = await build_app_state()
     app.state.mongo_client = state.mongo_client
     app.state.keyframe_repo = state.keyframe_repo
@@ -129,6 +149,7 @@ async def lifespan(app: FastAPI):
     app.state.tag_service = state.tag_service
     app.state.controller = state.controller
     app.state.chat_repo = state.chat_repo
+    app.state.som_service = state.som_service
 
 
     yield 

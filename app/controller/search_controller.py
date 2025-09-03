@@ -30,6 +30,7 @@ from app.services.tag_services import TagService
 from app.services.search_services import SearchService
 from app.schemas.search_settings import TopKReturn, ControllerParams
 from app.services.model_services import ModelService
+from app.services.som_service import SomFeedbackService
 
 import json
 from app.core.logger import RichAsyncLogger
@@ -59,7 +60,8 @@ class SearchController:
         keyframe_repo: KeyframeRepo,
         search_service: SearchService,
         tag_service: TagService,
-        model_service: ModelService
+        model_service: ModelService,
+        som_service: SomFeedbackService | None = None
         
     ):
         self.ocr_repo = ocr_repo
@@ -67,6 +69,7 @@ class SearchController:
         self.search_service = search_service
         self.tag_service = tag_service
         self.model_service = model_service
+        self.som_service = som_service
         self.vid2fps = json.load(open('/media/tinhanhnguyen/Projects/aic_application/data/vid2fps.json'))
     
     async def _milvus_to_keyframe_score(
@@ -92,7 +95,7 @@ class SearchController:
                 )
         return scores    
 
-    async def _search_keyframe(self, text: str, topk: int, param: dict, tag_boost_alpha: float = 0.0) -> List[KeyframeScore]:
+    async def _search_keyframe(self, text: str, topk: int, param: dict) -> List[KeyframeScore]:
 
         logger.info(f"{text=}")
         logger.info(f"{topk=}")
@@ -101,12 +104,7 @@ class SearchController:
 
         emb = self.model_service.embed_queries(text)
         milvus = await self.search_service.search_keyframe_dense(emb, topk, param)
-        print(f'Milvus kf return: {len(milvus)=}')
         scored = await self._milvus_to_keyframe_score(milvus)
-        if tag_boost_alpha > 0.0:
-            tags = self.tag_service.scan_tags(text)
-            print(tags)
-            scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
         return scored
 
     
@@ -117,13 +115,11 @@ class SearchController:
         text: str,
         topk: int,
         param:dict,
-        tag_boost_alpha: float,
         fusion: FusionMethod,
         weighted: float | None 
     ):
         dense_emb = self.model_service.embed_text(text)
 
-        logger.info(f"{topk=}")
         dense_req = self.search_service.caption_search.construct_dense_request(dense_emb, topk, param)
         sparse_req = self.search_service.caption_search.construct_sparse_request(text, topk, {"metric_type": "BM25"})
         
@@ -144,20 +140,12 @@ class SearchController:
             )
 
         scored = await self._milvus_to_keyframe_score(milvus_hits)
-        
-        if tag_boost_alpha > 0.0:
-            tags = self.tag_service.scan_tags(text)
-            scored = self.tag_service.rerank_keyframe_search_with_tags(tags, scored, tag_boost_alpha)
         return scored
 
     async def _search_ocr(self, text: str, topk: int) -> List[KeyframeScore]:
         print(topk)
         assert self.ocr_repo is not None, "ocr_repo not set"
         return await self.ocr_repo.search(query_text=text, top_k=topk)
-
-
-
-
 
     async def single_search(self, req: SingleSearchRequest, topk: TopKReturn, ctrl: ControllerParams) -> SingleSearchResponse:
 
@@ -166,7 +154,7 @@ class SearchController:
 
         if req.keyframe:
             if req.keyframe.text != '':
-                kf = await self._search_keyframe(req.keyframe.text, topk.topk_visual, ctrl.kf_search_param, req.keyframe.tag_boost_alpha)
+                kf = await self._search_keyframe(req.keyframe.text, topk.topk_visual, ctrl.kf_search_param)
 
                 logger.info(f"{len(kf)=}")
                 per_modality.append(ModalityResult(modality="keyframe", items=kf))
@@ -179,7 +167,6 @@ class SearchController:
                     text=req.caption.text,
                     topk=topk.topk_caption,
                     param=ctrl.cap_search_param,
-                    tag_boost_alpha=req.caption.tag_boost_alpha,
                     fusion=req.caption.fusion,
                     weighted=req.caption.weighted
                 )
@@ -212,14 +199,25 @@ class SearchController:
             fusion_summary = FusionSummary(method="rrf", detail=RRFDetail(k=60))
 
 
-        fused_scores = [item.score for item in fused]
-        lo,hi = min(fused_scores), max(fused_scores)
-        rng = hi - lo if (hi - lo) > 1e-6 else 1.0
-        for item in fused:
-            item.score = (item.score-lo)/rng
+        if ctrl.user_tags  and ctrl.tag_boost_alpha > 0.0:
+            fused = self.tag_service.rerank_keyframe_search_with_tags(
+                results_search=fused,
+                user_tags=ctrl.user_tags,
+                alpha=ctrl.tag_boost_alpha,
+                gamma=ctrl.tag_gamma
+            )
+    
+        
+        if hasattr(self, 'som_service') and self.som_service is not None and req.question_filename:
+            fused = await self.som_service.rerank_with_overlay(req.question_filename, fused, normalize_output=True)
+        else:
+            fused_scores = [item.score for item in fused]
+            lo,hi = min(fused_scores), max(fused_scores)
+            rng = hi - lo if (hi - lo) > 1e-6 else 1.0
+            for item in fused:
+                item.score = (item.score-lo)/rng
+
         fused = fused[:topk.final_topk]
-
-
 
         return SingleSearchResponse(fused=fused, per_modality=per_modality, fusion=fusion_summary, meta={})
     
@@ -276,6 +274,7 @@ class SearchController:
             #     method=norm_method,
             #     temperature=norm_temperature,
             # )
+            
             paths = beam_sequences_single_bucket_kf(
                 event_lists=event_lists,
                 K=per_bucket_top_k,
@@ -283,7 +282,7 @@ class SearchController:
                 bucket=bucket,
                 fps_map=self.vid2fps,
                 mu_s=0.0,
-                sigma_s=3.0,
+                sigma_s=3.0,    
                 W=0.08,
                 gap_cap_s=10.0
             )

@@ -221,6 +221,47 @@ def ingest_metadata(
     asyncio.run(_run())
 
 
+@app_cli.command("index_bmu")
+def index_bmu(
+    embeddings_path: Path = typer.Option(..., help=".npy embeddings array of shape [N, D]"),
+    som_weights_path: Path = typer.Option(..., help="SOM weights .npy with array of shape [H, W, D]"),
+    out_json: Path = typer.Option(..., help="Output JSON mapping identification -> [u, v]"),
+    l2_normalize: bool = typer.Option(True, help="L2 normalize embeddings and codebook before assignment"),
+):
+    import numpy as np
+    import json
+
+    X = np.load(embeddings_path)
+    W_raw = np.load(som_weights_path, allow_pickle=True)
+    W = W_raw
+
+    assert W.ndim == 3, f"Expect SOM weights shape [H,W,D], got {W.shape}"
+    H, Ww, D = W.shape
+    assert X.shape[1] == D, f"Embedding dim mismatch: X={X.shape}, W={W.shape}"
+    C = W.reshape(-1, D)  # [H*W, D]
+    if l2_normalize:
+        def l2n(a):
+            n = np.linalg.norm(a, axis=1, keepdims=True) + 1e-12
+            return a / n
+        X = l2n(X)
+        C = l2n(C)
+    # Compute BMU indices via cosine 
+    if l2_normalize:
+        sims = X @ C.T  # [N, H*W]
+        idx = np.argmax(sims, axis=1)
+    else:
+        x2 = (X**2).sum(axis=1, keepdims=True)
+        c2 = (C**2).sum(axis=1)[None, :]
+        sims = x2 + c2 - 2 * (X @ C.T)
+        idx = np.argmin(sims, axis=1)
+    u = (idx // Ww).astype(int)
+    v = (idx % Ww).astype(int)
+    mapping = {int(i): [int(uu), int(vv)] for i, (uu, vv) in enumerate(zip(u, v))}
+    with open(out_json, 'w', encoding='utf-8') as f:
+        json.dump(mapping, f)
+    print(f"Wrote BMU map for N={len(X)} to {out_json}")
+
+
 
 
 

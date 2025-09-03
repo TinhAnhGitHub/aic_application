@@ -10,6 +10,8 @@ print(ROOT_DIR)
 from app.core.dependencies import lifespan
 from app.api.health import router as health_router
 from app.api.search import router as search_router
+from app.api.history_intermediate import router as intermediate_router
+from app.api.feedback import router as feedback_router
 
 app = FastAPI(title="Hotspot Search API", version="0.1.0", lifespan=lifespan)
 
@@ -29,6 +31,8 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(search_router)
+app.include_router(intermediate_router)
+app.include_router(feedback_router)
 
 
 @app.get("/")
