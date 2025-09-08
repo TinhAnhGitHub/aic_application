@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     milvus_collection_caption: str = "caption"
 
 
-    tags_path: str | None = "/media/tinhanhnguyen/Projects/aic_application/data/tags.txt"   
+    id2tags: str | None = "/media/tinhanhnguyen/Projects/aic_application/data/id2tags.json"   
 
     st_model: str = "AITeamVN/Vietnamese_Embedding"
     beit3_ckpt: str = "/media/tinhanhnguyen/Projects/HCMAI/local/beit3/beit3_large_patch16_384_f30k_retrieval.pth"

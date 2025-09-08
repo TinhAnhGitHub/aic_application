@@ -3,10 +3,11 @@ set -e
 
 
 
-KEYFRAME_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/asr_chunking"
-CAPTION_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/keyframe_output"
+KEYFRAME_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/keyframe"
+CAPTION_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/kf_metadata"
+
 KEYFRAME_EMBEDDING="/media/tinhanhnguyen/Projects/aic_application/data/beit3_large_itc_patch16_224_features_array.npy"
-CAPTION_EMBEDDING="/media/tinhanhnguyen/Projects/aic_application/data/L21_L22_L23_L24_L25_L26_L27_L28_L29_L30_text_embedding.npy"
+CAPTION_EMBEDDING="/media/tinhanhnguyen/Projects/aic_application/data/L21_L22_L23_L24_L25_L26_L27_L28_L29_L30_text_embedding_normalized.npy"
 
 echo "[ingestion] Ingesting embeddings..."
 python //media/tinhanhnguyen/Projects/aic_application/app/migration/cli.py ingest_embedding \

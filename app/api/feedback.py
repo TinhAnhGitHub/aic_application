@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel, Field
+from pydantic import ConfigDict
 
 from app.services.som_service import SomFeedbackService
 from app.core.dependencies import get_som_service
@@ -13,9 +14,15 @@ class FeedbackPayload(BaseModel):
     identification: int = Field(...)
     action: str = Field(pattern="^(up|down)$")
     weight: float = 1.0
+    
 
 
-@router.post("", response_model=dict)
+@router.post(
+    "",
+    response_model=dict,
+    summary="Submit feedback (SOM overlay)",
+    description="Apply positive/negative feedback for a keyframe identification in a question group.",
+)
 async def submit_feedback(payload: FeedbackPayload, svc: SomFeedbackService = Depends(get_som_service)):
     try:
         await svc.apply_feedback(payload.question_filename, payload.identification, payload.action, payload.weight)
@@ -24,8 +31,13 @@ async def submit_feedback(payload: FeedbackPayload, svc: SomFeedbackService = De
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-@router.get("", response_model=dict)
-async def get_overlay_info(question_filename: str = Query(...), svc: SomFeedbackService = Depends(get_som_service)):
+@router.get(
+    "",
+    response_model=dict,
+    summary="Get feedback overlay info",
+    description="Get overlay summary (sum_pos, sum_neg, shape) for a question group.",
+)
+async def get_overlay_info(question_filename: str = Query(..., example="demo-1"), svc: SomFeedbackService = Depends(get_som_service)):
     try:
         pos, neg = await svc._get_overlay(question_filename)
         return {
@@ -38,8 +50,13 @@ async def get_overlay_info(question_filename: str = Query(...), svc: SomFeedback
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-@router.delete("", response_model=dict)
-async def clear_overlay(question_filename: str = Query(...), svc: SomFeedbackService = Depends(get_som_service)):
+@router.delete(
+    "",
+    response_model=dict,
+    summary="Clear feedback overlay",
+    description="Clear the SOM overlay and feedback events for a question group.",
+)
+async def clear_overlay(question_filename: str = Query(..., example="demo-1"), svc: SomFeedbackService = Depends(get_som_service)):
     try:
         d_overlay, d_events = await svc.repo.clear(question_filename)
         if question_filename in svc._cache:

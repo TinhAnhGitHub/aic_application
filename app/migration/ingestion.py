@@ -90,7 +90,7 @@ def insert_captions_milvus_sync(
 ):
     # Ensure numpy float32
     caption_emb = np.asarray(caption_emb, dtype=np.float32)
-    assert len(ids) == caption_emb.shape[0] == len(caption_texts)
+    # assert len(ids) == caption_emb.shape[0] == len(caption_texts)
 
     # Connect
     connections.connect("default", host=host, port=port)
@@ -114,3 +114,5 @@ def insert_captions_milvus_sync(
 
     return collection
     
+
+

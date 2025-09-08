@@ -35,7 +35,11 @@ app.include_router(intermediate_router)
 app.include_router(feedback_router)
 
 
-@app.get("/")
+@app.get(
+    "/",
+    summary="API root",
+    description="Returns API name and version. See /docs for Swagger UI.",
+)
 async def root():
     return {"name": app.title, "version": app.version}
 
@@ -51,5 +55,5 @@ if __name__ == "__main__":
         "app.main:app" if reload else app,
         host=host,
         port=port,
-        reload=False,
+        reload=True,
     )

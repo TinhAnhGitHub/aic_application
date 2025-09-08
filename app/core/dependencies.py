@@ -5,6 +5,7 @@ import json
 from fastapi import Request, FastAPI
 
 from app.core.config import settings
+from app.models.index import CaptionIndexMap
 from app.repository.keyframe_repo import init_mongo, KeyframeRepo
 from app.repository.elastic_repo import ElasticsearchKeyframeRepo
 from app.repository.vector_repo import KeyframeSearchRepo, CaptionSearchRepo
@@ -24,7 +25,7 @@ async def init_mongo2(db_uri: str, db_name: str):
     """
     client = AsyncIOMotorClient(db_uri)
     db = client[db_name]
-    await init_beanie(database=db, document_models=[SearchHistory, IntermediateResult, SomFeedbackEvent, SomOverlay])
+    await init_beanie(database=db, document_models=[SearchHistory, IntermediateResult, CaptionIndexMap])
     return client
 
 
@@ -75,12 +76,9 @@ async def build_app_state() -> AppState:
         keyframe_search=state.kf_search, caption_search=state.cap_search
     )
 
-    tags = []
-    if settings.tags_path:
-        with open(settings.tags_path, "r", encoding="utf-8") as f:
-            tags = [line.strip() for line in f if line.strip()]
-        
-    state.tag_service = TagService(tag_list=tags)
+    if settings.id2tags:
+        id2tags = json.load(open(settings.id2tags,'r', encoding='utf-8'))
+        state.tag_service = TagService(id_to_tags=id2tags)
     
     state.model_service = ModelService(
         beit3_ckpt=settings.beit3_ckpt,
@@ -94,7 +92,7 @@ async def build_app_state() -> AppState:
         search_service=state.search_service,
         tag_service=state.tag_service,
         model_service=state.model_service,
-        som_service=state.som_service,
+        # som_service=state.som_service,
     )
     await init_mongo2(settings.mongo_uri, settings.mongo_db)
     state.chat_repo = ChatRepo()
@@ -109,7 +107,6 @@ async def build_app_state() -> AppState:
         grid_w=settings.som_grid_w,
         r=settings.som_kernel_radius,
         sigma=settings.som_kernel_sigma,
-        decay_lambda_per_hour=settings.som_decay_lambda_per_hour,
         w_pos=settings.som_w_pos,
         w_neg=settings.som_w_neg,
         alpha=settings.som_alpha,

@@ -1,7 +1,9 @@
 # app/schemas/search_results.py
 from pydantic import BaseModel, Field
+from pydantic import ConfigDict
 from typing import List, Optional, Union
 from app.schemas.search_queries import SearchModality, FusionMethod
+from app.schemas.search_settings import ControllerParams
 
 
 
@@ -42,6 +44,7 @@ class SingleSearchResponse(BaseModel):
     fusion: FusionSummary | None
     meta: dict = Field(default_factory=dict)
 
+
 class TrakePath(BaseModel):
     items: List[KeyframeScore]  # One keyframe for each event. 
     score: float
@@ -54,3 +57,4 @@ class TrakePathResponse(BaseModel):
 class TrakeResponse(BaseModel):
     trake_paths: TrakePathResponse
     raw: list[list[KeyframeScore]]
+    

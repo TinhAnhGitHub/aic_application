@@ -1,4 +1,5 @@
 from pydantic import BaseModel, Field
+from pydantic import ConfigDict
 from typing import Literal, Optional, List, Union
 
 from app.schemas.search_settings import TopKReturn, ControllerParams
@@ -22,9 +23,8 @@ class CaptionQuery(BaseModalityQuery):
 
 
 class OCRQuery(BaseModalityQuery):
-    modality: Literal['ocr'] = 'ocr'
+    modality: Literal['ocr'] = 'ocr' 
     text: str
-
 
 class SingleSearchRequest(BaseModel):
     question_filename: str = Field(..., description="Logical name used to group related searches")
@@ -32,19 +32,17 @@ class SingleSearchRequest(BaseModel):
     caption: Optional[CaptionQuery] = None
     ocr: Optional[OCRQuery] = None
 
-
-
 class SingleSearchPayload(BaseModel):
     req: SingleSearchRequest
     ctrl: ControllerParams = ControllerParams()
 
-
-
-class EventQuery(BaseModel):
+class EventQuery(BaseModel): 
     event_order: int
     query: SingleSearchPayload
 
 class TrakeSearchRequest(BaseModel):
     events: list[EventQuery]
+
+    
 
 

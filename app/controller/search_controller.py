@@ -59,10 +59,9 @@ class SearchController:
         ocr_repo: ElasticsearchKeyframeRepo,
         keyframe_repo: KeyframeRepo,
         search_service: SearchService,
-        tag_service: TagService,
+        tag_service: TagService | None,
         model_service: ModelService,
         som_service: SomFeedbackService | None = None
-        
     ):
         self.ocr_repo = ocr_repo
         self.keyframe_repo = keyframe_repo
@@ -74,7 +73,7 @@ class SearchController:
     
     async def _milvus_to_keyframe_score(
         self,
-        result: list[MilvusSearchResponseItem]
+        result: list[MilvusSearchResponseItem],
     ) -> list[KeyframeScore]:
         identifications = [int(r.identification) for r in result]
         keyframes = await self.keyframe_repo.get_many_by_identifications(identifications)
@@ -95,6 +94,7 @@ class SearchController:
                 )
         return scores    
 
+
     async def _search_keyframe(self, text: str, topk: int, param: dict) -> List[KeyframeScore]:
 
         logger.info(f"{text=}")
@@ -107,7 +107,6 @@ class SearchController:
         scored = await self._milvus_to_keyframe_score(milvus)
         return scored
 
-    
 
 
     async def _search_caption(
@@ -175,7 +174,10 @@ class SearchController:
         
         if req.ocr:
             if req.ocr.text != '':
+                print(req.ocr.text)
                 ocr = await self._search_ocr(req.ocr.text, topk.topk_ocr)
+
+                print(f"{len(ocr)=}")
                 per_modality.append(ModalityResult(modality="ocr", items=ocr))
                 lists_in_order.append(ocr)
 
@@ -199,23 +201,23 @@ class SearchController:
             fusion_summary = FusionSummary(method="rrf", detail=RRFDetail(k=60))
 
 
-        if ctrl.user_tags  and ctrl.tag_boost_alpha > 0.0:
-            fused = self.tag_service.rerank_keyframe_search_with_tags(
-                results_search=fused,
-                user_tags=ctrl.user_tags,
-                alpha=ctrl.tag_boost_alpha,
-                gamma=ctrl.tag_gamma
-            )
+        # if ctrl.user_tags and ctrl.tag_boost_alpha > 0.0 and self.tag_service is not None:
+        #     fused = self.tag_service.rerank_keyframe_search_with_tags(
+        #         results_search=fused,
+        #         user_tags=ctrl.user_tags,
+        #         alpha=ctrl.tag_boost_alpha,
+        #         gamma=ctrl.tag_gamma
+        #     )
     
         
-        if hasattr(self, 'som_service') and self.som_service is not None and req.question_filename:
-            fused = await self.som_service.rerank_with_overlay(req.question_filename, fused, normalize_output=True)
-        else:
-            fused_scores = [item.score for item in fused]
-            lo,hi = min(fused_scores), max(fused_scores)
-            rng = hi - lo if (hi - lo) > 1e-6 else 1.0
-            for item in fused:
-                item.score = (item.score-lo)/rng
+        # if hasattr(self, 'som_service') and self.som_service is not None and req.question_filename:
+        #     fused = await self.som_service.rerank_with_overlay(req.question_filename, fused, normalize_output=True)
+        # else:
+        #     fused_scores = [item.score for item in fused]
+        #     lo,hi = min(fused_scores), max(fused_scores)
+        #     rng = hi - lo if (hi - lo) > 1e-6 else 1.0
+        #     for item in fused:
+        #         item.score = (item.score-lo)/rng
 
         fused = fused[:topk.final_topk]
 
@@ -269,12 +271,7 @@ class SearchController:
 
         by_bucket_paths: Dict[Tuple[str, str], List[Tuple[List[KeyframeScore], float]]] = {}
         for bucket, event_lists in by_group_video.items():
-            # norm_lists = normalize_event_scores_kf(
-            #     event_lists,
-            #     method=norm_method,
-            #     temperature=norm_temperature,
-            # )
-            
+
             paths = beam_sequences_single_bucket_kf(
                 event_lists=event_lists,
                 K=per_bucket_top_k,
@@ -286,7 +283,6 @@ class SearchController:
                 W=0.08,
                 gap_cap_s=10.0
             )
-            print(f"{len(paths)}")
             if paths:
                 by_bucket_paths[bucket] = paths
         

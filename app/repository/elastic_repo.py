@@ -104,10 +104,6 @@ class ElasticsearchKeyframeRepo:
                             "fold": {"type": "text", "analyzer": "my_vi_fold"},
                         },
                     },
-                    "_ocr_joined": {  
-                        "type": "text",
-                        "index": False,
-                    },
                 }
             },
         }
@@ -122,8 +118,7 @@ class ElasticsearchKeyframeRepo:
         _id = self._make_id(item)
         body = item.model_dump(mode="json")
         if item.ocr:
-            body["_ocr_joined"] = " ".join(item.ocr)
-            body['ocr'] = item.ocr
+            body['ocr'] = " ".join(item.ocr)
         await self.es.index(index=self.index, id=_id, document=body)
 
     async def bulk_upsert(self, docs: list[KeyframeInstance], refresh: bool = True):
@@ -133,8 +128,7 @@ class ElasticsearchKeyframeRepo:
             for d in docs:
                 body = d.model_dump()
                 if d.ocr:
-                    body["_ocr_joined"] = " ".join(d.ocr)
-                    body["ocr"] = [" ".join(d.ocr)]
+                    body["ocr"] = " ".join(d.ocr)
                 yield {
                     "_op_type": "index",
                     "_index": self.index,
@@ -183,8 +177,8 @@ class ElasticsearchKeyframeRepo:
             filters.append({"term": {"video_id": video_id}})
         
         shoulds = [
-            {"match_phrase": {"ocr": {"query": query_text, "slop": 0, "boost": 6.0}}},
-             {"match_phrase": {"ocr.fold": {"query": query_text, "slop": 0, "boost": 5.0}}},
+            {"match_phrase": {"ocr": {"query": query_text, "slop": 2, "boost": 6.0}}},
+             {"match_phrase": {"ocr.fold": {"query": query_text, "slop": 2, "boost": 5.0}}},
              {
                 "match": {
                     "ocr": {
@@ -232,9 +226,10 @@ class ElasticsearchKeyframeRepo:
         out = []
         for hit in hits:
             src = hit.get("_source", {})
+            score = float(hit.get("_score", 0.0))
             out.append(
                 KeyframeScore(
-                    score=float(src),
+                    score=score,
                     group_id=src['group_id'],
                     video_id=src['video_id'],
                     keyframe_id=src['keyframe_id'],

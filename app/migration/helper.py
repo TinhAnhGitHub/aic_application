@@ -112,7 +112,7 @@ async def _ensure_keyframe_collection(client: AsyncMilvusClient, dim: int):
             field_name='kf_embedding',
             index_type='IVF_FLAT',
             metric_type='IP',
-            params={"nlist": 1024}
+            params={"nlist": 2600, 'nprobe': 8}
         )
         await client.create_index(
             collection_name=name,
@@ -188,10 +188,11 @@ async def _ensure_caption_collection(
     
     index_params = client.prepare_index_params()
     index_params.add_index(
-        field_name="caption_embedding",
-        index_type="AUTOINDEX",          
-        metric_type="IP",
-    )   
+        field_name='caption_embedding',
+        index_type='IVF_FLAT',
+        metric_type='IP',
+        params={"nlist": 2600, 'nprobe': 8}
+    ) 
 
     if has_sparse:
         index_params.add_index(
@@ -281,5 +282,6 @@ def init_collection(
         await client.close()
         print("[init] collections and indexes are ready.")
     asyncio.run(_run())
+
 
 

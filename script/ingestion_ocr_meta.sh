@@ -3,8 +3,8 @@ set -e
 
 
 
-KEYFRAME_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/asr_chunking"
-CAPTION_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/keyframe_output"
+KEYFRAME_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/keyframe"
+CAPTION_DIR="/media/tinhanhnguyen/Projects/HCMAI/data/kf_metadata"
 
 
 

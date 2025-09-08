@@ -6,6 +6,10 @@ import os
 import sys
 import glob
 
+import typer
+from motor.motor_asyncio import AsyncIOMotorClient
+from beanie import init_beanie
+
 ROOT_DIR = os.path.abspath(
     os.path.join(__name__, '..')
 )
@@ -19,6 +23,8 @@ from pymilvus import(
 from app.migration.helper import _ensure_caption_collection, _ensure_keyframe_collection
 from app.core.config import settings
 from app.repository.keyframe_repo import init_mongo, KeyframeRepo
+from app.models.index import CaptionIndexMap
+from app.models.common import KeyframeModel
 from app.repository.elastic_repo import ElasticsearchKeyframeRepo
 from app.schemas.application import KeyframeInstance
 
@@ -65,13 +71,9 @@ def _load_caption(path: str):
 
 
 def _parse_caption_parts(caption_path: str, base_folder: str) -> tuple[int, int, int]:
-    """
-    Parse <base>/<group_id>/<video_id>/captions/<keyframe_number>.json
-    Returns ints for proper numeric sorting.
-    """
     rel_path = os.path.relpath(caption_path, base_folder)
     parts = rel_path.split(os.sep)
-    group_id, video_id, _, _, filename = parts
+    group_id, video_id, filename = parts
     keyframe_number = os.path.splitext(filename)[0]
 
     gnum = int(re.sub(r"\D", "", group_id)) if re.search(r"\d", group_id) else 0
@@ -101,30 +103,34 @@ def ingest_embedding(
     logger.info(f"{keyframe_paths[:5]}")
     logger.info(f"{caption_paths[:5]}")
 
+
+
     keyframe_embedding = np.load(keyframe_embedding_path)
     caption_embedding = np.load(caption_embedding_path)
 
     N = len(keyframe_paths)
     assert keyframe_embedding.shape[0] == N, "Keyframe embedding count must match number of keyframe images"
-    assert caption_embedding.shape[0] == N, "Caption embedding count must match number of keyframe images"
+    # assert caption_embedding.shape[0] == N, "Caption embedding count must match number of keyframe images"
     assert N == len(caption_paths), "hihi"
     logger.info(f"{N=}")
 
     ids = list(range(N))
 
     caption_texts = []
-    lengths = []
     for i, caption_path in tqdm(enumerate(caption_paths)):
-        text = _load_caption(caption_path)
-        lengths.append(len(text))
-        if len(text) > 65535:
-            print(f"⚠️ Caption {i} too long: {len(text)} chars, file={caption_paths[i]}")
-            text = text[:65535]
-        caption_texts.append(text)
-    print(f"Total captions: {len(lengths)}")
-    print(f"Min length: {min(lengths)}")
-    print(f"Max length: {max(lengths)}")
-    print(f"Mean length: {sum(lengths)/len(lengths):.2f}")
+        json_dict = json.load(open(caption_path, 'r', encoding='utf-8'))
+        caption = json_dict['caption']
+        if isinstance(caption, list):
+            for cap in caption:
+                caption_texts.append(cap)
+        elif isinstance(caption,str):
+            caption_texts.append(caption)
+        else:
+            raise
+    
+    for caption in caption_texts:
+        if not isinstance(caption, str):
+            print(caption)
 
     logger.info("Begin kf ingestion")
     insert_keyframes_milvus_sync(
@@ -149,12 +155,24 @@ def ingest_embedding(
 def _parse_triplet_from_path(p: Path) -> tuple[str, str, str]:
     """
     Expect keyframe image path like:
-    <base>/<group_id>/<video_id>/keyframes/<keyframe_id>.webp
+    <base>/<group_id>/<video_id>/<keyframe_id>.webp
     """
-    group_id: str = p.parent.parent.parent.name
-    video_id: str = p.parent.parent.name
+    group_id: str = p.parent.parent.name
+    video_id: str = p.parent.name
     keyframe_id: str = p.stem
-    return group_id, video_id, keyframe_id
+
+    return  group_id, video_id, keyframe_id
+
+def keysort(path):
+    path = Path(path)
+    group_id: str = path.parent.parent.name[1:]
+    video_id: str = path.parent.name[1:]
+    keyframe_id: str = path.stem
+
+    return(int(group_id), int(video_id), int(keyframe_id))
+
+    
+
 
 @app_cli.command("ingest_meta")
 def ingest_metadata(
@@ -163,12 +181,11 @@ def ingest_metadata(
 ):
     async def _run():
         keyframe_paths = glob.glob(f"{keyframes_dir}/**/*.webp", recursive=True)
-        keyframe_paths = sorted(keyframe_paths)
+        keyframe_paths = sorted(keyframe_paths, key=lambda x: keysort(x))
 
         caption_paths = glob.glob(f"{captions_dir}/**/*.json", recursive=True)
         caption_paths = sorted(
-            caption_paths,
-            key=lambda p: _parse_caption_parts(p, str(captions_dir))
+            caption_paths, key=lambda x: int(Path(x).stem)
         )
 
         keyframes: list[KeyframeInstance] = []
@@ -190,16 +207,15 @@ def ingest_metadata(
                     raise e
 
             tags = json_dict['tag_list']
-            keyframes.append(
-                    KeyframeInstance(
-                        group_id=g,
-                        video_id=v,
-                        keyframe_id=kf_id,
-                        identification=ident,
-                        tags=tags,
-                        ocr=ocr,
-                    )
-                )
+            kf_instance = KeyframeInstance(
+                group_id=g,
+                video_id=v,
+                keyframe_id=kf_id,
+                identification=ident,
+                tags=tags,
+                ocr=ocr,
+            )
+            keyframes.append(kf_instance)
             
         mongo_client = await init_mongo(settings.mongo_uri, settings.mongo_db)
         repo = KeyframeRepo()
@@ -207,63 +223,139 @@ def ingest_metadata(
         mongo_client.close()
         logger.info(f"[MongoDB] Inserted {len(keyframes)} documents")
 
-        # es_repo = ElasticsearchKeyframeRepo(
-        #     hosts=settings.es_hosts,
-        #     index=settings.es_index,
-        #     api_key=settings.es_api_key,
-        #     basic_auth=(settings.es_basic_user, settings.es_basic_pass),
-        #     verify_certs=settings.es_verify_certs,
-        # )
-        # await es_repo.ensure_index(recreate=False)
-        # await es_repo.bulk_upsert(keyframes, refresh=True)
-        # await es_repo.es.close()
+        es_repo = ElasticsearchKeyframeRepo(
+            hosts=settings.es_hosts,
+            index=settings.es_index,
+            api_key=settings.es_api_key,
+            basic_auth=(settings.es_basic_user, settings.es_basic_pass),
+            verify_certs=settings.es_verify_certs,
+        )
+        await es_repo.ensure_index(recreate=False)
+        await es_repo.bulk_upsert(keyframes, refresh=True)
+        await es_repo.es.close()
         logger.info(f"[Elasticsearch] Indexed {len(keyframes)} documents")
     asyncio.run(_run())
 
 
-@app_cli.command("index_bmu")
-def index_bmu(
-    embeddings_path: Path = typer.Option(..., help=".npy embeddings array of shape [N, D]"),
-    som_weights_path: Path = typer.Option(..., help="SOM weights .npy with array of shape [H, W, D]"),
-    out_json: Path = typer.Option(..., help="Output JSON mapping identification -> [u, v]"),
-    l2_normalize: bool = typer.Option(True, help="L2 normalize embeddings and codebook before assignment"),
-):
-    import numpy as np
-    import json
-
-    X = np.load(embeddings_path)
-    W_raw = np.load(som_weights_path, allow_pickle=True)
-    W = W_raw
-
-    assert W.ndim == 3, f"Expect SOM weights shape [H,W,D], got {W.shape}"
-    H, Ww, D = W.shape
-    assert X.shape[1] == D, f"Embedding dim mismatch: X={X.shape}, W={W.shape}"
-    C = W.reshape(-1, D)  # [H*W, D]
-    if l2_normalize:
-        def l2n(a):
-            n = np.linalg.norm(a, axis=1, keepdims=True) + 1e-12
-            return a / n
-        X = l2n(X)
-        C = l2n(C)
-    # Compute BMU indices via cosine 
-    if l2_normalize:
-        sims = X @ C.T  # [N, H*W]
-        idx = np.argmax(sims, axis=1)
-    else:
-        x2 = (X**2).sum(axis=1, keepdims=True)
-        c2 = (C**2).sum(axis=1)[None, :]
-        sims = x2 + c2 - 2 * (X @ C.T)
-        idx = np.argmin(sims, axis=1)
-    u = (idx // Ww).astype(int)
-    v = (idx % Ww).astype(int)
-    mapping = {int(i): [int(uu), int(vv)] for i, (uu, vv) in enumerate(zip(u, v))}
-    with open(out_json, 'w', encoding='utf-8') as f:
-        json.dump(mapping, f)
-    print(f"Wrote BMU map for N={len(X)} to {out_json}")
 
 
 
+# def _parse_triplet_from_path_str(path_str: str) -> tuple[str, str, str]:
+#     p = Path(path_str)
+#     return p.parent.parent.name, p.parent.name, p.stem
 
+
+# def _normalize_ocr_blocks(val) -> list[str]:
+#     if val is None:
+#         return [""]
+#     if isinstance(val, dict) and "ocr_blocks" in val:
+#         val = val["ocr_blocks"]
+#     if isinstance(val, list) and (len(val) > 0) and isinstance(val[0], dict):
+#         try:
+#             return [str(d.get("content", "")) for d in val] or [""]
+#         except Exception:
+#             return [""]
+#     if isinstance(val, list):
+#         return [str(x) for x in val] or [""]
+#     s = str(val)
+#     return [s] if s else [""]
+
+
+# @app_cli.command("ingest_meta")
+# def ingest_metadata(
+#     globalid2keyframe_path: Path = typer.Option(
+#         ..., help="JSON: global keyframe id -> image path"
+#     ),
+#     globalid2ocr_blocks: Path = typer.Option(
+#         ..., help="JSON: global keyframe id -> list of OCR blocks (or [''])"
+#     ),
+#     globalidcaption2keyframe_path: Path = typer.Option(
+#         ..., help="JSON: global caption id -> {group_id, video_id, keyframe_number, caption_idx}"
+#     ),
+#     globalid2tag_list: Path = typer.Option(
+#         ..., help="JSON: global keyframe id -> list of tags (or [])"
+#     ),
+#     es_index: str = typer.Option(
+#         "keyframes", help="Elasticsearch index name"
+#     ),
+# ):
+#     """
+#     Insert Mongo KeyframeModel (with OCR placeholders), build CaptionIndexMap from global caption map,
+#     and index OCR into Elasticsearch.
+#     """
+#     from tqdm import tqdm
+#     async def _run():
+#         # -------- Load inputs --------
+#         id2path: dict[str, str] = json.load(open(globalid2keyframe_path, "r", encoding="utf-8"))
+#         id2ocr: dict[str, object] = json.load(open(globalid2ocr_blocks, "r", encoding="utf-8"))
+#         capmap: dict[str, dict] = json.load(open(globalidcaption2keyframe_path, "r", encoding="utf-8"))
+#         id2tags = json.load(open(globalid2tag_list, 'r', encoding='utf-8'))
+
+#         motor = AsyncIOMotorClient(settings.mongo_uri)
+#         db = motor[settings.mongo_db]
+#         await init_beanie(database=db, document_models=[KeyframeModel, CaptionIndexMap])
+
+#         sorted_kf_ids = sorted(map(int, id2path.keys()))
+#         keyframes: list[KeyframeInstance] = []
+#         for ident in tqdm(sorted_kf_ids):
+#             p = id2path[str(ident)]
+#             g, v, kf_id = _parse_triplet_from_path_str(p)
+#             tags = id2tags.get(str(ident), [])
+#             ocr_blocks = _normalize_ocr_blocks(id2ocr.get(str(ident)))
+#             keyframes.append(
+#                 KeyframeInstance(
+#                     group_id=g,
+#                     video_id=v,
+#                     keyframe_id=kf_id,
+#                     identification=ident,
+#                     tags=tags,      
+#                     ocr=ocr_blocks,
+#                 )
+#             )
+
+#         repo = KeyframeRepo()
+#         # await repo.create_many([k.model_dump() for k in keyframes], ordered=False)
+#         logger.info(f"[MongoDB] Inserted {len(keyframes)} KeyframeModel docs")
+
+
+#         sorted_cap_ids = sorted(map(int, capmap.keys()))
+#         cap_docs = []
+#         for cid in sorted_cap_ids:
+#             rec = capmap[str(cid)]
+#             cap_docs.append(
+#                 CaptionIndexMap(
+#                     identification=cid,
+#                     group_id=rec[0],
+#                     video_id=rec[1],
+#                     keyframe_id=rec[2],
+#                     caption_idx=int(rec[3]),
+#                 )
+#             )
+#         # if cap_docs:
+#         #     await CaptionIndexMap.insert_many(cap_docs, ordered=False)
+#         #     logger.info(f"[MongoDB] Inserted {len(cap_docs)} CaptionIndexMap docs")
+#         # else:
+#         #     logger.info("[MongoDB] No CaptionIndexMap docs to insert (cap map empty)")
+
+#         es_repo = ElasticsearchKeyframeRepo(
+#             hosts=settings.es_hosts,
+#             index=es_index,
+#             api_key=settings.es_api_key,
+#             basic_auth=(settings.es_basic_user, settings.es_basic_pass),
+#             verify_certs=settings.es_verify_certs,
+#             request_timeout=1000
+#         )
+#         logger.info(f"[Elasticsearch]")
+#         await es_repo.ensure_index(recreate=True)
+#         await es_repo.bulk_upsert(keyframes, refresh=True)
+#         await es_repo.es.close()
+#         logger.info(f"[Elasticsearch] Indexed/Updated OCR for {len(keyframes)} keyframes")
+
+#         # -------- Close Mongo client --------
+#         motor.close()
+
+#     import asyncio
+#     asyncio.run(_run())
 
 
     

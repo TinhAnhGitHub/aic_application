@@ -2,13 +2,11 @@ from typing import List, Optional, Union
 from beanie import PydanticObjectId
 from pymongo.results import DeleteResult, InsertManyResult
 from app.models.history import SearchHistory
-
-
+from datetime import datetime, timedelta
 class ChatRepo:
     def __init__(self, model=SearchHistory):
         self.model = model
 
-    # ---------- CREATE ----------
     async def create_one(self, item: Union[dict, SearchHistory]) -> SearchHistory:
         if isinstance(item, dict):
             item = self.model(**item)
@@ -27,14 +25,27 @@ class ChatRepo:
     async def get_all(self) -> List[SearchHistory]:
         return await self.model.find_all().to_list()
 
-    async def get_by_timestamp(
-        self, timestamp: str, limit: int = 50
-    )-> list[SearchHistory]:
-        return (
-            await self.model.find(self.model.timestamp == timestamp)
-                .limit(1)
-                .to_list()
-        )[0]
+    async def get_by_timestamp(self, timestamp: str, limit: int = 50) -> Optional[SearchHistory]:
+        try:
+            dt = datetime.fromisoformat(timestamp)
+        except ValueError:
+            return None
+        lo, hi = dt - timedelta(milliseconds=1), dt + timedelta(milliseconds=1)
+        docs = await self.model.find(
+            self.model.timestamp >= lo,
+            self.model.timestamp <= hi,
+        ).limit(1).to_list()
+        return docs[0] if docs else None
+    
+    async def get_all_question_filename(self):
+        all_history = await self.get_all()
+        return list(
+            set(
+                his.question_filename for his in all_history
+            )
+        )
+    
+
     async def get_by_question(
         self, question_filename: str, limit: int = 50
     ) -> List[SearchHistory]:

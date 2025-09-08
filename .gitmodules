@@ -1,0 +1,3 @@
+[submodule "aic-frontend"]
+	path = aic-frontend
+	url = https://github.com/PhucNguyenLamp/aic-frontend

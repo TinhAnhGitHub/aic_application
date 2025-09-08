@@ -2,6 +2,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from statistics import pstdev, mean
 import math
 from app.schemas.search_results import KeyframeScore
+import heapq
 
 def rrf_fuse(
     per_lists:list[list[KeyframeScore]],
@@ -74,34 +75,35 @@ def weighted_fuse(
 
 
 def _kf_pos(h: KeyframeScore)->int:
-    id_kf = h.keyframe_id.split('_')[1]
-    return int(id_kf)
+    if 'frame' in h.keyframe_id:
+        return int(h.keyframe_id.split('_')[1])
+    return int(h.keyframe_id)
 
 
-def _dedup_hits_kf(
-    hits: list[KeyframeScore], window: int = 6
-)-> list[KeyframeScore]:
-    if not hits: 
-        return []
+# def _dedup_hits_kf(
+#     hits: list[KeyframeScore], window: int = 6
+# )-> list[KeyframeScore]:
+#     if not hits: 
+#         return []
 
-    hits = sorted(hits, key=lambda h: _kf_pos(h))
-    kept: list[KeyframeScore] = []
-    i, n = 0, len(hits)
+#     hits = sorted(hits, key=lambda h: _kf_pos(h))
+#     kept: list[KeyframeScore] = []
+#     i, n = 0, len(hits)
 
-    while i < n:
-        start = _kf_pos(hits[i])
-        j = i
-        segment: list[KeyframeScore] = []
-        while j < n and _kf_pos(hits[j]) < start + window:
-            segment.append(hits[j])
-            j += 1
+#     while i < n:
+#         start = _kf_pos(hits[i])
+#         j = i
+#         segment: list[KeyframeScore] = []
+#         while j < n and _kf_pos(hits[j]) < start + window:
+#             segment.append(hits[j])
+#             j += 1
 
-        best = max(segment, key=lambda x: x.score)
-        kept.append(best)
-        while j < n and (_kf_pos(hits[j]) - start) < window:
-            j += 1
-        i = j
-    return kept
+#         best = max(segment, key=lambda x: x.score)
+#         kept.append(best)
+#         while j < n and (_kf_pos(hits[j]) - start) < window:
+#             j += 1
+#         i = j
+#     return kept
 
 
 def organize_and_dedup_group_video_kf(
@@ -124,7 +126,7 @@ def organize_and_dedup_group_video_kf(
         completed = True
         for e_idx in range(T):
             ev_list = per_event.get(e_idx, [])
-            ev_list = _dedup_hits_kf(ev_list, window)
+            # ev_list = _dedup_hits_kf(ev_list, window)
             if not ev_list:
                 completed = False
                 break
@@ -240,6 +242,145 @@ def beam_sequences_single_bucket_kf(
 
 
 
+def kbest_viterbi_paths_single_bucket_kf(
+    event_lists: List[List[KeyframeScore]],   # one bucket: [E0 list, E1 list, ...], all non-empty
+    bucket: tuple[str, str],
+    fps_map: dict[str, float],
+    K: Optional[int] = 5,                     # number of paths to return (global top-K)
+    mu_s: float = 0.0,                        # Gaussian prior mean (seconds)
+    sigma_s: float = 3.0,                     # Gaussian prior std (seconds)
+    W: float = 0.08,                          # weight for temporal bonus
+    gap_cap_s: float = 10.0,                  # clamp overly large gaps
+    per_state_k: Optional[int] = None,        # keep top-k partial paths per node (defaults to K)
+) -> List[Tuple[List[KeyframeScore], float]]:
+    
+    if not event_lists or any(not l for l in event_lists):
+        return []
+
+    key_with_ext = f"{bucket[0]}_{bucket[1]}.mp4"
+    fps = fps_map.get(key_with_ext) or fps_map.get(f"{bucket[0]}_{bucket[1]}") or 30.0
+
+    def temporal_bonus(prev: KeyframeScore, curr: KeyframeScore) -> float:
+        gap_frames = _kf_pos(curr) - _kf_pos(prev)
+        if gap_frames <= 0:
+            return -1e9  
+        gap_s = gap_frames / fps
+        if gap_cap_s is not None:
+            gap_s = max(0.0, min(gap_s, gap_cap_s))
+        return float(W * math.exp(- ((gap_s - mu_s) ** 2) / (2.0 * sigma_s * sigma_s)))
+
+    P = int(per_state_k or (K if K is not None else 10))
+
+    T = len(event_lists)
+
+    # dp scores [i][j] list of top p cummulative score ending at node i,j
+    # dp bp: list of backpointers (prevj, prev rank index) aligned with dp_scores[i][j]
+    dp_scores: List[List[List[float]]] = []
+    dp_bp:     List[List[List[Tuple[int, int]]]] = []
+
+    layer0_scores: List[List[float]] = []
+    layer0_bp:     List[List[Tuple[int,int]]] = []
+
+    for h in event_lists[0]:
+        layer0_scores.append([float(h.score)])
+        layer0_bp.append([(-1,-1)])
+    dp_scores.append(layer0_scores)
+    dp_bp.append(layer0_bp)
+
+
+    for i in range(1, T):
+        prev_layer = event_lists[i-1]
+        curr_layer = event_lists[i]
+
+        prev_scores = dp_scores[i-1]
+        prev_bp = dp_bp[i-1]
+
+        cur_score_layer: list[list[float]] = []
+        cur_bp_layer: list[list[tuple[int, int]]] = []\
+        
+        for j, cur in enumerate(curr_layer):
+            candidates: list[tuple[float,int,int]] = [] # score, prev J, prev rank score
+            pos_cur = _kf_pos(cur)
+            for pj, prev in enumerate(prev_layer):
+
+                if _kf_pos(prev) >= pos_cur:
+                    continue
+                    
+                time_bonus = temporal_bonus(prev, cur)
+                if time_bonus < -1e8:  # prohibited
+                    continue
+                    
+                prev_list = prev_scores[pj]
+                
+                for r, base in enumerate(prev_list[:P]):
+                    s = base + float(cur.score) + time_bonus
+                    candidates.append((s,pj, r))
+            
+            if not candidates:
+                cur_score_layer.append([])
+                cur_bp_layer.append([])
+                continue
+
+            best = heapq.nlargest(P, candidates, key=lambda t: t[0])
+            cur_score_layer.append(
+                [s for (s, _, _) in best]
+            )
+            cur_bp_layer.append(
+                [(pj,r) for (_, pj, r) in best]
+            )
+        dp_scores.append(cur_score_layer)
+        dp_bp.append(cur_bp_layer)
+    
+    last_scores = dp_scores[-1]
+    end_heap: List[Tuple[float, int, int]] = []  # (score, end_j, rank_idx)
+    for j, scores in enumerate(last_scores):
+        for r, s in enumerate(scores[:P]):
+            end_heap.append((s, j, r))
+
+    if not end_heap:
+        return []
+
+    if K is None:
+        K = len(end_heap)
+
+    top_end = heapq.nlargest(K, end_heap, key=lambda t: t[0])
+
+    
+    def backtrack(
+        end_j: int, r: int
+    ) -> list[KeyframeScore]:
+        path_rev: list[KeyframeScore] = []
+        j = end_j
+        i = T - 1
+        rank = r
+        while i >= 0 and j >= 0:
+            path_rev.append(event_lists[i][j])
+            if i == 0:
+                break
+                
+            prev_j, prev_rank = dp_bp[i][j][rank]
+            j, rank = prev_j, prev_rank
+            i -= 1
+        path_rev.reverse()
+        return path_rev
+
+    out: list[tuple[list[KeyframeScore], float]] = []
+    seen = set()
+    for s, end_j, r in top_end:
+        path = backtrack(end_j, r)
+        sig = tuple((h.group_id, h.video_id, h.keyframe_id) for h in path)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        out.append((path, float(s)))
+    
+    out.sort(key=lambda x: x[1], reverse=True)
+    return out
+
+
+        
+                    
+
 def rerank_across_videos_kf(
     by_bucket_paths: Dict[Tuple[str, str], List[Tuple[List[KeyframeScore], float]]],
     top_k: Optional[int] = None
@@ -248,4 +389,4 @@ def rerank_across_videos_kf(
     for _, paths in by_bucket_paths.items():
         flat.extend(paths)
     flat.sort(key=lambda x: x[1], reverse=True)
-    return flat if top_k is None else flat[:top_k]
+    return flat if top_k is None else flat[:top_k]  

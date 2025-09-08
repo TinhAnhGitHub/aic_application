@@ -64,10 +64,18 @@ class KeyframeRepo:
         self, group_id: str, video_id: str, keyframe_id: str
     ) -> Optional[KeyframeModel]:
         return await self.model.find_one(
-            (self.model.group_id == group_id)
-            & (self.model.video_id == video_id)
-            & (self.model.keyframe_id == keyframe_id)
+            (self.model.group_id == group_id),
+             (self.model.video_id == video_id),
+             (self.model.keyframe_id == keyframe_id)
         )
+
+    async def get_by_groupid_vidid(
+        self, group_id: str, video_id: str
+    ) -> Optional[list[KeyframeModel]]:
+        return await self.model.find(
+            (self.model.group_id == group_id),
+             (self.model.video_id == video_id),
+        ).to_list(None)
 
     async def get_many_by_identifications(
         self, identifications: Iterable[int]
